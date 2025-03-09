@@ -1,4 +1,3 @@
-# frontend/app.py
 import torch
 import clip
 import gradio as gr

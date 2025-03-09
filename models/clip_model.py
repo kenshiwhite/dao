@@ -1,7 +1,5 @@
 import torch
 import clip
-from torchvision import transforms
-from PIL import Image
 
 class CLIPModel:
     def __init__(self, model_name="ViT-B/32", device="cuda"):
