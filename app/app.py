@@ -167,6 +167,15 @@ with gr.Blocks() as demo:
             outputs=[top_results, classification_results]
         )
 
+        most_repeated_queries = gr.Gallery(label="Most Repeated Queries")
+        refresh_repeated_button = gr.Button("Refresh")
+
+        refresh_repeated_button.click(
+            fn=load_most_repeated_descriptions,
+            outputs=most_repeated_queries
+        )
+
+
     with gr.Tab("Zero-Shot Classification"):
 
         with gr.Row():
@@ -180,14 +189,6 @@ with gr.Blocks() as demo:
             fn=classify_image,
             inputs=classify_image_input,
             outputs=classification_output
-        )
-
-        most_repeated_queries = gr.Gallery(label="Most Repeated Queries")
-        refresh_repeated_button = gr.Button("Refresh")
-
-        refresh_repeated_button.click(
-            fn=load_most_repeated_descriptions,
-            outputs=most_repeated_queries
         )
 
     # with gr.Tab("Recent Queries"):
