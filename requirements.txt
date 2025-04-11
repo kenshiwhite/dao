@@ -1,0 +1,10 @@
+torch
+torchvision
+clip
+gradio
+numpy
+matplotlib
+tqdm
+imagenetv2_pytorch
+psycopg2-binary
+python-dotenv
