@@ -1,28 +1,50 @@
 import torch
 import clip
+import numpy as np
+from torchvision import transforms
+from PIL import Image
+
 
 class CLIPModel:
-    def __init__(self, model_name="ViT-B/32", device="cuda"):
-        """Initialize the CLIP model."""
-        self.device = device if torch.cuda.is_available() else "cpu"
+    def __init__(self, model_name="ViT-B/32"):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model, self.preprocess = clip.load(model_name, device=self.device)
         self.model.eval()
 
-    def preprocess_image(self, image):
-        """Preprocess an image for CLIP."""
-        return self.preprocess(image).unsqueeze(0).to(self.device).float()
-
     def encode_image(self, image):
-        """Encode an image into feature vectors."""
+        if isinstance(image, Image.Image):
+            image = self.preprocess(image).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            image_features = self.model.encode_image(image)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-        return image_features
+            features = self.model.encode_image(image)
+            features /= features.norm(dim=-1, keepdim=True)
+        return features
 
     def encode_text(self, text):
-        """Encode text into feature vectors."""
         with torch.no_grad():
-            text_tokens = clip.tokenize([text]).to(self.device)
-            text_features = self.model.encode_text(text_tokens).float()
+            text_input = clip.tokenize([text]).to(self.device)
+            features = self.model.encode_text(text_input)
+            features /= features.norm(dim=-1, keepdim=True)
+        return features
+
+    def zero_shot_classify(self, image, class_names):
+        """Perform zero-shot classification on an image with proper gradient handling"""
+        with torch.no_grad():  # Ensure no gradients are tracked
+            # Get image features
+            image_features = self.encode_image(image)
+
+            # Process text descriptions
+            text_descriptions = [f"a photo of a {label}" for label in class_names]
+            text_inputs = clip.tokenize(text_descriptions).to(self.device)
+            text_features = self.model.encode_text(text_inputs)
             text_features /= text_features.norm(dim=-1, keepdim=True)
-        return text_features
+
+            # Calculate similarity
+            logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+
+            # Detach from computation graph before converting to numpy
+            return logits.detach().cpu().numpy()
+
+    def image_similarity(self, query_features, target_features):
+        """Calculate similarity between query and target features"""
+        with torch.no_grad():
+            return (target_features @ query_features.T).squeeze().cpu().numpy()

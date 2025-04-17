@@ -1,80 +1,92 @@
+import os
 import psycopg2
-from psycopg2 import sql
+from psycopg2 import pool, OperationalError
+from datetime import datetime
+from PIL import Image
+from contextlib import contextmanager
+import time
 
-# Database connection parameters
-DB_NAME = "postgres"
-DB_USER = "postgres"
-DB_PASSWORD = "050228Aa"  # Replace with your PostgreSQL password
-DB_HOST = "localhost"
-DB_PORT = "5432"
 
-def get_db_connection():
-    """Establish a connection to the PostgreSQL database."""
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
-    return conn
+class DatabaseManager:
+    def __init__(self, max_retries=3, retry_delay=1):
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.connection_pool = None
+        self._initialize_pool()
+        self.create_tables()
 
-def save_query_to_db(description, image_path):
-    """Save a query (description and image path) to the database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        query = sql.SQL("""
-            INSERT INTO queried_photos (description, image_path)
-            VALUES (%s, %s)
-        """)
-        cur.execute(query, (description, image_path))
-        conn.commit()
-    except Exception as e:
-        print(f"Error saving query to database: {e}")
-    finally:
-        cur.close()
-        conn.close()
+    def _initialize_pool(self):
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=10,
+                    host=os.getenv('DB_HOST', 'localhost'),
+                    database=os.getenv('DB_NAME', 'clip_search'),
+                    user=os.getenv('DB_USER', 'postgres'),
+                    password=os.getenv('DB_PASSWORD', '050228'),
+                    port=os.getenv('DB_PORT', '5432')
+                )
+                return
+            except OperationalError as e:
+                retries += 1
+                if retries >= self.max_retries:
+                    raise ConnectionError(f"Failed to connect to database after {self.max_retries} attempts: {e}")
+                time.sleep(self.retry_delay)
 
-def get_recent_queries(limit=10):
-    """Retrieve recent queries from the database."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        query = sql.SQL("""
-            SELECT description, image_path, query_time
-            FROM queried_photos
-            ORDER BY query_time DESC
-            LIMIT %s
-        """)
-        cur.execute(query, (limit,))
-        results = cur.fetchall()
-        return results
-    except Exception as e:
-        print(f"Error retrieving recent queries: {e}")
-        return []
-    finally:
-        cur.close()
-        conn.close()
+    @contextmanager
+    def get_cursor(self):
+        if not self.connection_pool:
+            raise ConnectionError("Database connection pool not initialized")
 
-def get_most_repeated_descriptions(limit=5):
-    """Retrieve the most repeated descriptions and their photos."""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        query = sql.SQL("""
-            SELECT description, image_path, COUNT(*) as frequency
-            FROM queried_photos
-            GROUP BY description, image_path
-            ORDER BY frequency DESC
-            LIMIT %s
-        """)
-        cur.execute(query, (limit,))
-        results = cur.fetchall()
-        return results
-    except Exception as e:
-        print(f"Error retrieving most repeated descriptions: {e}")
-        return []
-    finally:
-        cur.close()
-        conn.close()
+        conn = self.connection_pool.getconn()
+        try:
+            with conn.cursor() as cursor:
+                yield cursor
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            self.connection_pool.putconn(conn)
+
+    def create_tables(self):
+        with self.get_cursor() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS queries (
+                    id SERIAL PRIMARY KEY,
+                    query_text TEXT,
+                    image_path TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+    def save_query(self, query_text, image):
+        """Save a query and its result image to the database"""
+        os.makedirs("data/query_results", exist_ok=True)
+        image_path = f"data/query_results/{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        image.save(image_path)
+
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO queries (query_text, image_path) VALUES (%s, %s)",
+                (query_text, image_path)
+            )
+
+    def get_recent_queries(self, limit=10):
+        """Get recent queries from the database"""
+        with self.get_cursor() as cursor:
+            cursor.execute(
+                "SELECT query_text, image_path FROM queries ORDER BY timestamp DESC LIMIT %s",
+                (limit,)
+            )
+            return cursor.fetchall()
+
+    def close_all(self):
+        """Close all connections in the pool"""
+        if hasattr(self, 'connection_pool') and self.connection_pool:
+            self.connection_pool.closeall()
+
+    def __del__(self):
+        self.close_all()
