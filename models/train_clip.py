@@ -10,6 +10,7 @@ import datetime
 import json
 import logging
 
+# Configuration
 CONFIG = {
     "model_name": "RN50",
     "batch_size": 32,
