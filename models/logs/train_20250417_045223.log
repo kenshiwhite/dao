@@ -1,0 +1,83 @@
+2025-04-17 04:52:23,916 - INFO - Using device: cpu
+2025-04-17 04:52:35,205 - INFO - Loaded ViT-B/32 model
+2025-04-17 04:53:02,704 - INFO - Loaded COCO dataset with 118287 samples
+2025-04-17 04:53:02,751 - INFO - Created dataloader with 3697 batches
+2025-04-17 04:53:02,773 - INFO - Starting training for 3 epochs
+2025-04-17 04:53:02,774 - INFO - Training config: {
+  "model_name": "ViT-B/32",
+  "batch_size": 32,
+  "epochs": 3,
+  "lr": 5e-06,
+  "image_size": 224,
+  "coco_root": "C:\\Users\\Asus/.cache/coco",
+  "train_ann_file": "annotations/instances_train2017.json",
+  "train_img_dir": "train2017",
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints"
+}
+2025-04-17 04:53:03,841 - ERROR - Error in batch 0: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:04,177 - ERROR - Error in batch 1: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:04,517 - ERROR - Error in batch 2: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:04,943 - ERROR - Error in batch 3: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:05,304 - ERROR - Error in batch 4: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:05,665 - ERROR - Error in batch 5: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:05,991 - ERROR - Error in batch 6: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:06,370 - ERROR - Error in batch 7: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:06,716 - ERROR - Error in batch 8: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:07,093 - ERROR - Error in batch 9: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:07,378 - ERROR - Error in batch 10: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:07,710 - ERROR - Error in batch 11: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:07,992 - ERROR - Error in batch 12: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:08,261 - ERROR - Error in batch 13: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:08,514 - ERROR - Error in batch 14: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:08,797 - ERROR - Error in batch 15: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:09,096 - ERROR - Error in batch 16: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:09,373 - ERROR - Error in batch 17: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:09,650 - ERROR - Error in batch 18: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:09,915 - ERROR - Error in batch 19: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:10,213 - ERROR - Error in batch 20: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:10,499 - ERROR - Error in batch 21: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:10,810 - ERROR - Error in batch 22: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:11,152 - ERROR - Error in batch 23: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:11,518 - ERROR - Error in batch 24: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:11,835 - ERROR - Error in batch 25: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:12,112 - ERROR - Error in batch 26: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:12,385 - ERROR - Error in batch 27: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:12,670 - ERROR - Error in batch 28: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:12,996 - ERROR - Error in batch 29: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:13,304 - ERROR - Error in batch 30: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:13,612 - ERROR - Error in batch 31: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:14,052 - ERROR - Error in batch 32: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:14,771 - ERROR - Error in batch 33: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:15,199 - ERROR - Error in batch 34: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:15,535 - ERROR - Error in batch 35: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:15,939 - ERROR - Error in batch 36: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:16,301 - ERROR - Error in batch 37: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:16,627 - ERROR - Error in batch 38: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:16,949 - ERROR - Error in batch 39: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:17,258 - ERROR - Error in batch 40: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:17,582 - ERROR - Error in batch 41: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:17,881 - ERROR - Error in batch 42: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:18,204 - ERROR - Error in batch 43: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:18,505 - ERROR - Error in batch 44: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:18,809 - ERROR - Error in batch 45: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:19,262 - ERROR - Error in batch 46: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:19,629 - ERROR - Error in batch 47: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:19,950 - ERROR - Error in batch 48: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:20,331 - ERROR - Error in batch 49: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:20,803 - ERROR - Error in batch 50: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:21,185 - ERROR - Error in batch 51: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:21,491 - ERROR - Error in batch 52: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:21,841 - ERROR - Error in batch 53: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:22,981 - ERROR - Error in batch 54: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:27,833 - ERROR - Error in batch 55: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:28,638 - ERROR - Error in batch 56: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:29,125 - ERROR - Error in batch 57: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:30,008 - ERROR - Error in batch 58: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:31,067 - ERROR - Error in batch 59: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:31,422 - ERROR - Error in batch 60: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:31,825 - ERROR - Error in batch 61: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:33,002 - ERROR - Error in batch 62: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:33,864 - ERROR - Error in batch 63: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:36,306 - ERROR - Error in batch 64: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>
+2025-04-17 04:53:40,113 - ERROR - Error in batch 65: pic should be PIL Image or ndarray. Got <class 'torch.Tensor'>

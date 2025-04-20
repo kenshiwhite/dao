@@ -27,6 +27,7 @@ class CLIPModel:
         return features
 
     def zero_shot_classify(self, image, class_names):
+<<<<<<< HEAD
         """Perform zero-shot classification on an image with proper gradient handling"""
         with torch.no_grad():  # Ensure no gradients are tracked
             # Get image features
@@ -48,3 +49,19 @@ class CLIPModel:
         """Calculate similarity between query and target features"""
         with torch.no_grad():
             return (target_features @ query_features.T).squeeze().cpu().numpy()
+=======
+        """Perform zero-shot classification on an image"""
+        image_features = self.encode_image(image)
+
+        text_descriptions = [f"a photo of a {label}" for label in class_names]
+        text_inputs = clip.tokenize(text_descriptions).to(self.device)
+        text_features = self.model.encode_text(text_inputs)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+
+        logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+        return logits.cpu().numpy()
+
+    def image_similarity(self, query_features, target_features):
+        """Calculate similarity between query and target features"""
+        return (target_features @ query_features.T).squeeze().cpu().numpy()
+>>>>>>> 26dec6349fcce9d756c560c8358efbf46b65da81
