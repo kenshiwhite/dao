@@ -26,8 +26,8 @@ load_dotenv()
 
 # Load precomputed features and images
 def load_precomputed_data():
-    features_path = "data/saved_features.pt"
-    images_path = "data/saved_images.pt"
+    features_path = "scripts/data/saved_features.pt"
+    images_path = "scripts/data/saved_images.pt"
 
     if not (Path(features_path).exists() and Path(images_path).exists()):
         raise FileNotFoundError("Precomputed data not found. Run preprocessing first.")

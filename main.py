@@ -5,8 +5,8 @@ import os
 
 def main():
     # Check if precomputed data exists
-    if not (os.path.exists("data/saved_features.pt") and
-            os.path.exists("data/saved_images.pt")):
+    if not (os.path.exists("scripts/data/saved_features.pt") and
+            os.path.exists("scripts/data/saved_images.pt")):
         print("Preprocessing data...")
         preprocess_dataset()
 
