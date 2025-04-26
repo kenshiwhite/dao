@@ -11,7 +11,7 @@ import json
 import logging
 
 CONFIG = {
-    "model_name": "RN50",
+    "model_name": "ViT-B/32",
     "batch_size": 32,
     "epochs": 3,
     "lr": 5e-6,
@@ -80,10 +80,16 @@ def get_transform(image_size):
     ])
 
 
+from torch.utils.tensorboard import SummaryWriter
+
 def train(model, dataloader, epochs=3, lr=5e-6):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = torch.nn.CrossEntropyLoss()
     model.train()
+
+    # Initialize SummaryWriter
+    writer = SummaryWriter(CONFIG["log_dir"])
+    logger.info(f"TensorBoard logging at {CONFIG['log_dir']}")
 
     logger.info(f"Starting training for {epochs} epochs")
     logger.info(f"Training config: {json.dumps(CONFIG, indent=2)}")
@@ -94,21 +100,21 @@ def train(model, dataloader, epochs=3, lr=5e-6):
 
         for batch_idx, (images, texts) in enumerate(progress):
             try:
-                # Move data to device
                 images = images.to(device)
                 text_inputs = clip.tokenize(texts, truncate=True).to(device)
 
-                # Forward pass
                 logits_per_image, logits_per_text = model(images, text_inputs)
                 labels = torch.arange(len(images)).to(device)
 
                 loss = (criterion(logits_per_image, labels) + criterion(logits_per_text, labels)) / 2
                 epoch_loss += loss.item()
 
-                # Backprop
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
+                # ✅ Log batch loss
+                writer.add_scalar("Loss/Batch", loss.item(), epoch * len(dataloader) + batch_idx)
 
                 progress.set_postfix({"loss": loss.item()})
 
@@ -116,11 +122,12 @@ def train(model, dataloader, epochs=3, lr=5e-6):
                 logger.error(f"Error in batch {batch_idx}: {str(e)}")
                 continue
 
-        # Log epoch metrics
         avg_loss = epoch_loss / len(dataloader)
         logger.info(f"Epoch {epoch + 1} completed. Avg loss: {avg_loss:.4f}")
 
-        # Save checkpoint
+        # ✅ Log epoch average loss
+        writer.add_scalar("Loss/Epoch", avg_loss, epoch)
+
         checkpoint_path = os.path.join(CONFIG["checkpoint_dir"], f"epoch_{epoch + 1}.pt")
         torch.save({
             'epoch': epoch,
@@ -130,6 +137,7 @@ def train(model, dataloader, epochs=3, lr=5e-6):
         }, checkpoint_path)
         logger.info(f"Saved checkpoint to {checkpoint_path}")
 
+    writer.close()  # ✅ Close the writer properly
     return model
 
 

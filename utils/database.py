@@ -1,19 +1,19 @@
 import os
 import psycopg2
 from psycopg2 import pool, OperationalError
-from datetime import datetime
-from PIL import Image
 from contextlib import contextmanager
 import time
+from dotenv import load_dotenv
 
+# Загружаем переменные окружения
+load_dotenv()
 
-class DatabaseManager:
+class database:
     def __init__(self, max_retries=3, retry_delay=1):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.connection_pool = None
         self._initialize_pool()
-        self.create_tables()
 
     def _initialize_pool(self):
         retries = 0
@@ -22,23 +22,26 @@ class DatabaseManager:
                 self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
                     minconn=1,
                     maxconn=10,
-                    host=os.getenv('DB_HOST', 'localhost'),
-                    database=os.getenv('DB_NAME', 'clip_search'),
-                    user=os.getenv('DB_USER', 'postgres'),
-                    password=os.getenv('DB_PASSWORD', '050228'),
-                    port=os.getenv('DB_PORT', '5432')
+                    host=os.getenv("DB_HOST"),
+                    database=os.getenv("DB_NAME"),
+                    user=os.getenv("DB_USER"),
+                    password=os.getenv("DB_PASSWORD"),
+                    port=int(os.getenv("DB_PORT"))
                 )
+                print("✅ Успешно подключено к базе данных!")
                 return
             except OperationalError as e:
                 retries += 1
+                safe_message = str(e).encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+                print(f"❌ Ошибка при подключении: {safe_message}")
                 if retries >= self.max_retries:
-                    raise ConnectionError(f"Failed to connect to database after {self.max_retries} attempts: {e}")
+                    raise ConnectionError("Не удалось подключиться к базе данных после нескольких попыток.")
                 time.sleep(self.retry_delay)
 
     @contextmanager
     def get_cursor(self):
         if not self.connection_pool:
-            raise ConnectionError("Database connection pool not initialized")
+            raise ConnectionError("Пул соединений не инициализирован")
 
         conn = self.connection_pool.getconn()
         try:
@@ -47,45 +50,47 @@ class DatabaseManager:
             conn.commit()
         except Exception as e:
             conn.rollback()
-            raise e
+            print(f"❌ Ошибка выполнения запроса: {e}")
+            raise
         finally:
             self.connection_pool.putconn(conn)
 
+    def execute_query(self, query, params=None, fetch=False):
+        """Универсальный метод для выполнения запросов."""
+        with self.get_cursor() as cursor:
+            cursor.execute(query, params)
+            if fetch:
+                return cursor.fetchall()
+
     def create_tables(self):
-        with self.get_cursor() as cursor:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS queries (
-                    id SERIAL PRIMARY KEY,
-                    query_text TEXT,
-                    image_path TEXT,
-                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-    def save_query(self, query_text, image):
-        """Save a query and its result image to the database"""
-        os.makedirs("data/query_results", exist_ok=True)
-        image_path = f"data/query_results/{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        image.save(image_path)
-
-        with self.get_cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO queries (query_text, image_path) VALUES (%s, %s)",
-                (query_text, image_path)
+        """Создание таблиц."""
+        self.execute_query("""
+            CREATE TABLE IF NOT EXISTS queries (
+                id SERIAL PRIMARY KEY,
+                query_text TEXT NOT NULL,
+                image_path TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
+        """)
+
+    def save_query(self, query_text, image_path):
+        """Сохранение запроса в базу данных."""
+        self.execute_query(
+            "INSERT INTO queries (query_text, image_path) VALUES (%s, %s)",
+            (query_text, image_path)
+        )
 
     def get_recent_queries(self, limit=10):
-        """Get recent queries from the database"""
-        with self.get_cursor() as cursor:
-            cursor.execute(
-                "SELECT query_text, image_path FROM queries ORDER BY timestamp DESC LIMIT %s",
-                (limit,)
-            )
-            return cursor.fetchall()
+        """Получение последних запросов."""
+        return self.execute_query(
+            "SELECT query_text, image_path FROM queries ORDER BY timestamp DESC LIMIT %s",
+            (limit,),
+            fetch=True
+        )
 
     def close_all(self):
-        """Close all connections in the pool"""
-        if hasattr(self, 'connection_pool') and self.connection_pool:
+        """Закрыть все соединения."""
+        if self.connection_pool:
             self.connection_pool.closeall()
 
     def __del__(self):

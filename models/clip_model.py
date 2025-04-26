@@ -27,7 +27,6 @@ class CLIPModel:
         return features
 
     def zero_shot_classify(self, image, class_names):
-
         """Perform zero-shot classification on an image with proper gradient handling"""
         with torch.no_grad():  # Ensure no gradients are tracked
             # Get image features
@@ -49,7 +48,6 @@ class CLIPModel:
         """Calculate similarity between query and target features"""
         with torch.no_grad():
             return (target_features @ query_features.T).squeeze().cpu().numpy()
-
         """Perform zero-shot classification on an image"""
         image_features = self.encode_image(image)
 
