@@ -1,4 +1,4 @@
-from app.app import create_interface
+from utils.gradio_temp import create_interface
 from scripts.preprocess_data import preprocess_dataset
 import os
 
@@ -11,8 +11,7 @@ def main():
         preprocess_dataset()
 
     # Launch the app
-    app = create_interface()
-    app.launch()
+    create_interface()
 
 
 if __name__ == "__main__":
