@@ -8,3 +8,6 @@ tqdm
 imagenetv2_pytorch
 psycopg2-binary
 python-dotenv
+tf-keras
+cv2
+redis
