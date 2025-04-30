@@ -79,6 +79,7 @@ def get_transform(image_size):
                   (0.26862954, 0.26130258, 0.27577711))
     ])
 
+from torch.utils.tensorboard import SummaryWriter
 
 from torch.utils.tensorboard import SummaryWriter
 
