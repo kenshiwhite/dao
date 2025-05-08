@@ -1,7 +1,7 @@
-from utils.database import DatabaseManager
+from utils.database import database
 
 try:
-    db = DatabaseManager()
+    db = database()
     with db.get_cursor() as cursor:
         cursor.execute('SELECT VERSION()')
         db_version = cursor.fetchone()

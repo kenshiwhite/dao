@@ -1,18 +1,20 @@
 import os
+import time
+from typing import Optional, List, Tuple
 import psycopg2
 from psycopg2 import pool, OperationalError
 from contextlib import contextmanager
-import time
 from dotenv import load_dotenv
 
-# Загружаем переменные окружения
+# Загружаем переменные окружения из .env
 load_dotenv()
 
-class database:
-    def __init__(self, max_retries=3, retry_delay=1):
+
+class Database:
+    def __init__(self, max_retries: int = 3, retry_delay: int = 1):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.connection_pool = None
+        self.connection_pool: Optional[pool.ThreadedConnectionPool] = None
         self._initialize_pool()
 
     def _initialize_pool(self):
@@ -55,7 +57,7 @@ class database:
         finally:
             self.connection_pool.putconn(conn)
 
-    def execute_query(self, query, params=None, fetch=False):
+    def execute_query(self, query: str, params: Optional[tuple] = None, fetch: bool = False):
         """Универсальный метод для выполнения запросов."""
         with self.get_cursor() as cursor:
             cursor.execute(query, params)
@@ -63,7 +65,7 @@ class database:
                 return cursor.fetchall()
 
     def create_tables(self):
-        """Создание таблиц."""
+        """Создание таблицы запросов, если она ещё не создана."""
         self.execute_query("""
             CREATE TABLE IF NOT EXISTS queries (
                 id SERIAL PRIMARY KEY,
@@ -73,23 +75,24 @@ class database:
             )
         """)
 
-    def save_query(self, query_text, image_path):
-        """Сохранение запроса в базу данных."""
+    def save_query(self, query_text: str, image_path: str):
+        """Сохранение одного запроса в базу данных."""
         self.execute_query(
             "INSERT INTO queries (query_text, image_path) VALUES (%s, %s)",
             (query_text, image_path)
         )
 
-    def get_recent_queries(self, limit=10):
+    def get_recent_queries(self, limit: int = 10) -> List[Tuple[str, str]]:
         """Получение последних запросов."""
-        return self.execute_query(
+        results = self.execute_query(
             "SELECT query_text, image_path FROM queries ORDER BY timestamp DESC LIMIT %s",
             (limit,),
             fetch=True
         )
+        return results if results else []
 
     def close_all(self):
-        """Закрыть все соединения."""
+        """Закрытие всех соединений из пула."""
         if self.connection_pool:
             self.connection_pool.closeall()
 

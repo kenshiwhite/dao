@@ -9,7 +9,7 @@ def create_db():
             id INTEGER PRIMARY KEY,       -- Используем INTEGER PRIMARY KEY для автоинкремента
             query_text TEXT NOT NULL,
             result_image_path TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP    
         )
     ''')
 

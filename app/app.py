@@ -1,64 +1,27 @@
-#app.py:
-import gradio as gr
+# app.py
+import logging
+import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import torch
-from torchvision import transforms
+import faiss
 from PIL import Image
 from pathlib import Path
+import matplotlib.pyplot as plt
 from models.clip_model import CLIPModel
-from utils.database import DatabaseManager
+from typing import List, Optional, Tuple
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from io import BytesIO
+import base64
+import asyncio
 
-# Initialize components
-clip_model = CLIPModel()
-# At the top of app.py
-from utils.database import DatabaseManager
-from dotenv import load_dotenv
-import os
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
-# Load environment variables
-load_dotenv()
-
-# Initialize database
-#db = DatabaseManager()
-#db.create_tables()  # Ensure tables exist
-
-
-# Load precomputed features and images
-def load_precomputed_data():
-    features_path = "scripts/data/saved_features.pt"
-    images_path = "scripts/data/saved_images.pt"
-
-    if not (Path(features_path).exists() and Path(images_path).exists()):
-        raise FileNotFoundError("Precomputed data not found. Run preprocessing first.")
-
-    return torch.load(features_path), torch.load(images_path)
-
-
-all_features, all_images = load_precomputed_data()
-
-
-def create_classification_plot(probs, class_names):
-    """Create a horizontal bar plot of classification probabilities"""
-    plt.figure(figsize=(10, 5))
-    y_pos = np.arange(len(probs))
-    plt.barh(y_pos, probs, color='skyblue')
-    plt.yticks(y_pos, class_names)
-    plt.xlabel("Probability")
-    plt.title("Zero-Shot Classification Results")
-    plt.gca().invert_yaxis()
-    plt.tight_layout()
-    return plt
-
-# Update the classify_image function to use COCO classes
-def classify_image(image, class_names=None):
-    """Classify an image using zero-shot classification"""
-    if image is None:
-        raise gr.Error("Please upload an image for classification.")
-
-    # Use COCO classes if none provided
-    if class_names is None:
-        class_names = [
+class CLIPBackend:
+    def __init__(self):
+        self.clip_model = CLIPModel()
+        self.all_features, self.all_images = self.load_precomputed_data()
+        self.coco_classes = [
             'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
             'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
             'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
@@ -74,82 +37,166 @@ def classify_image(image, class_names=None):
             'scissors', 'teddy bear', 'hair drier', 'toothbrush'
         ]
 
-    probs = clip_model.zero_shot_classify(image, class_names)[0]
-    top_indices = np.argsort(probs)[-5:][::-1]
-    top_probs = probs[top_indices]
-    top_classes = [class_names[i] for i in top_indices]
+        self.index = faiss.IndexFlatL2(self.all_features.shape[1])
+        self.index.add(self.all_features)
 
-    plot = create_classification_plot(top_probs, top_classes)
-    return plot
+    def load_precomputed_data(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        script_dir = Path(__file__).parent
+        base_dir = script_dir.parent
+        features_path = base_dir / "scripts" / "data" / "saved_features.pt"
+        images_path = base_dir / "scripts" / "data" / "saved_images.pt"
 
-def search_images(query=None, query_image=None, top_k=4):
-    """Search for similar images based on text or image query"""
-    if query is None and query_image is None:
-        raise gr.Error("Please provide either a text query or an image.")
+        if not features_path.exists() or not images_path.exists():
+            raise FileNotFoundError("Precomputed data not found. Please check your paths.")
 
-    similarity = np.zeros(len(all_features))
+        features = torch.load(str(features_path))
+        images = torch.load(str(images_path))
+        return features, images
 
-    if query:
-        text_features = clip_model.encode_text(query)
-        similarity += clip_model.image_similarity(text_features, all_features)
+    def classify_image(self, image: Image.Image, class_names: Optional[List[str]] = None) -> Tuple[List[float], List[str]]:
+        if image is None:
+            raise ValueError("Please provide an image for classification.")
 
-    if query_image:
-        image_features = clip_model.encode_image(query_image)
-        similarity += clip_model.image_similarity(image_features, all_features)
+        class_names = class_names or self.coco_classes
+        probs = self.clip_model.zero_shot_classify(image, class_names)[0]
+        top_indices = np.argsort(probs)[-5:][::-1]
+        top_probs = probs[top_indices]
+        top_classes = [class_names[i] for i in top_indices]
 
-    top_indices = np.argsort(similarity)[-top_k:][::-1]
+        return top_probs.tolist(), top_classes
 
-    # Convert tensor images to PIL Images
-    results = []
-    for i in top_indices:
-        img_tensor = all_images[i].clamp(0, 1)
-        img_np = img_tensor.numpy().transpose(1, 2, 0)  # Convert CxHxW to HxWxC
+    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None, top_k: int = 4) -> List[Tuple[torch.Tensor, float]]:
+        if query is None and query_image is None:
+            raise ValueError("Please provide either a text query or an image.")
+
+        similarity = np.zeros(len(self.all_features))
+
+        if query:
+            text_features = self.clip_model.encode_text(query)
+            similarity += self.clip_model.image_similarity(text_features, self.all_features)
+
+        if query_image:
+            image_features = self.clip_model.encode_image(query_image)
+            similarity += self.clip_model.image_similarity(image_features, self.all_features)
+
+        top_indices = np.argsort(similarity)[-top_k:][::-1]
+        result_images = [self.all_images[i] for i in top_indices]
+        result_scores = [similarity[i] for i in top_indices]
+
+        return list(zip(result_images, result_scores))
+
+    @staticmethod
+    def tensor_to_pil(img_tensor: torch.Tensor) -> Image.Image:
+        img_tensor = img_tensor.clamp(0, 1)
+        img_np = img_tensor.cpu().numpy().transpose(1, 2, 0)
         img_np = (img_np * 255).astype('uint8')
-        results.append(Image.fromarray(img_np))
+        return Image.fromarray(img_np)
 
-    # Save to database
-#    for img in results:
-#        db.save_query(query or "Image query", img)
+    def get_similarity_map(self, pil_img: Image.Image) -> np.ndarray:
+        img_tensor = self.clip_model.preprocess(pil_img).unsqueeze(0).to(self.clip_model.device)
+        with torch.no_grad():
+            features = self.clip_model.encode_image(img_tensor)
+        similarity_map = features.squeeze().cpu().numpy()
+        similarity_map = similarity_map.reshape(16, 32)  # Assuming 512-D features
+        return similarity_map
 
-    return results
+    def generate_heatmap(self, image, similarity_map):
+        """
+        Generate a heatmap overlay on the input image using the similarity map.
+        Args:
+            image (PIL.Image): input image
+            similarity_map (torch.Tensor or np.ndarray): similarity map (2D)
+        Returns:
+            PIL.Image: heatmap overlay
+        """
 
+        # Ensure similarity map is a numpy array
+        if isinstance(similarity_map, torch.Tensor):
+            similarity_map = similarity_map.detach().cpu().numpy()
 
-def create_interface():
-    with gr.Blocks(title="CLIP Image Search") as demo:
-        gr.Markdown("# 🖼️ CLIP Image Search and Classification")
+        # Normalize similarity map to 0-1
+        similarity_map = (similarity_map - similarity_map.min()) / (similarity_map.max() - similarity_map.min() + 1e-6)
 
-        with gr.Tab("Search"):
-            with gr.Row():
-                with gr.Column():
-                    text_query = gr.Textbox(label="Text Query")
-                    image_query = gr.Image(label="Image Query", type="pil")
-                    search_btn = gr.Button("Search")
-                with gr.Column():
-                    results_gallery = gr.Gallery(label="Search Results")
+        # Resize similarity map to match image size
+        similarity_map = Image.fromarray((similarity_map * 255).astype(np.uint8)).resize(image.size, resample=Image.BICUBIC)
 
-            search_btn.click(
-                search_images,
-                inputs=[text_query, image_query],
-                outputs=results_gallery
-            )
+        # Apply colormap
+        cmap = plt.get_cmap('jet')
+        colored_map = np.array(cmap(np.array(similarity_map)/255.0))[:, :, :3]  # Drop alpha channel
 
-        with gr.Tab("Classification"):
-            with gr.Row():
-                with gr.Column():
-                    classify_input = gr.Image(label="Upload Image", type="pil")
-                    classify_btn = gr.Button("Classify")
-                with gr.Column():
-                    classify_output = gr.Plot(label="Classification Results")
+        # Convert back to PIL
+        colored_map = (colored_map * 255).astype(np.uint8)
+        heatmap = Image.fromarray(colored_map)
 
-            classify_btn.click(
-                fn=lambda img: classify_image(img),
-                inputs=classify_input,
-                outputs=classify_output
-            )
+        # Blend the heatmap with the original image
+        overlay = Image.blend(image.convert('RGB'), heatmap, alpha=0.5)
 
-    return demo
+        return overlay
 
+# Initialize FastAPI
+app = FastAPI()
+clip_backend = CLIPBackend()
 
-if __name__ == "__main__":
-    demo = create_interface()
-    demo.launch()
+@app.post("/classify_image")
+async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form(False)):
+    try:
+        image = Image.open(BytesIO(await file.read())).convert('RGB')
+        top_probs, top_classes = clip_backend.classify_image(image)
+
+        response = {
+            "top_probs": top_probs,
+            "top_classes": top_classes,
+        }
+
+        if show_heatmap:
+            heatmap = clip_backend.generate_heatmap(image)
+            buffered = BytesIO()
+            heatmap.save(buffered, format="JPEG")
+            heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
+            response["heatmap_base64"] = heatmap_base64
+
+        return response
+
+    except Exception as e:
+        logging.error(f"Error classifying image: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
+
+@app.post("/search_images")
+async def search_images(query: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), show_heatmap: bool = Form(False)):
+    try:
+        if query:
+            results = await clip_backend.search_images(query=query)
+        elif file:
+            image = Image.open(BytesIO(await file.read())).convert('RGB')
+            results = await clip_backend.search_images(query_image=image)
+        else:
+            raise HTTPException(status_code=400, detail="Please provide either a text query or an image.")
+
+        response = []
+
+        for img_tensor, similarity_score in results:
+            img_pil = clip_backend.tensor_to_pil(img_tensor)
+
+            buffered = BytesIO()
+            img_pil.save(buffered, format="JPEG")
+            img_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            result = {
+                "similarity": similarity_score,
+                "image_base64": img_base64
+            }
+
+            if show_heatmap:
+                heatmap = clip_backend.generate_heatmap(img_pil)
+                heatmap_buffered = BytesIO()
+                heatmap.save(heatmap_buffered, format="JPEG")
+                heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(heatmap_buffered.getvalue()).decode('utf-8')
+                result["heatmap_base64"] = heatmap_base64
+
+            response.append(result)
+
+        return {"results": response}
+
+    except Exception as e:
+        logging.error(f"Error searching images: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error during search.")
