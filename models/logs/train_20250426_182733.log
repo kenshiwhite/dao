@@ -1,0 +1,18 @@
+2025-04-26 18:27:33,610 - INFO - Using device: cpu
+2025-04-26 18:27:35,851 - INFO - Loaded ViT-B/32 model
+2025-04-26 18:27:53,819 - INFO - Loaded COCO dataset with 118287 samples
+2025-04-26 18:27:53,819 - INFO - Created dataloader with 3697 batches
+2025-04-26 18:27:53,822 - INFO - TensorBoard logging at logs
+2025-04-26 18:27:53,822 - INFO - Starting training for 3 epochs
+2025-04-26 18:27:53,822 - INFO - Training config: {
+  "model_name": "ViT-B/32",
+  "batch_size": 32,
+  "epochs": 3,
+  "lr": 5e-06,
+  "image_size": 224,
+  "coco_root": "C:\\Users\\gupra/.cache/coco",
+  "train_ann_file": "annotations/instances_train2017.json",
+  "train_img_dir": "train2017",
+  "log_dir": "logs",
+  "checkpoint_dir": "checkpoints"
+}
