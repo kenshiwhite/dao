@@ -6,6 +6,9 @@ from PIL import Image
 import asyncio
 from utils.database import Database
 
+# Создание компонента dropdown
+dropdown = gr.Dropdown(choices=[], label="Recent Queries", visible=False)
+
 # Создание экземпляров backend и базы данных
 backend = CLIPBackend()
 db = Database()
@@ -68,11 +71,11 @@ async def search_images(query=None, query_image=None, top_k=4):
 def suggest_queries():
     # Получаем последние 5 запросов из базы данных
     recent_queries = db.get_recent_queries(limit=5)
-    # Если запросов нет, убираем dropdown
+    # Если запросы есть, обновляем dropdown
     if recent_queries:
-        return gr.Dropdown.update(choices=recent_queries, visible=True)
+        return dropdown.update(choices=recent_queries, visible=True)
     else:
-        return gr.Dropdown.update(visible=False)
+        return dropdown.update(visible=False)
 
 def add_query_to_database(query):
     # Сохраняем новый запрос в базе данных

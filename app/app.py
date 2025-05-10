@@ -1,8 +1,6 @@
-# app.py
 import logging
-import cv2
-import numpy as np
 import torch
+import numpy as np
 import faiss
 from PIL import Image
 from pathlib import Path
@@ -65,7 +63,7 @@ class CLIPBackend:
 
         return top_probs.tolist(), top_classes
 
-    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None, top_k: int = 4) -> List[Tuple[torch.Tensor, float]]:
+    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None, top_k: int = 10) -> List[Tuple[torch.Tensor, float]]:
         if query is None and query_image is None:
             raise ValueError("Please provide either a text query or an image.")
 
@@ -101,15 +99,6 @@ class CLIPBackend:
         return similarity_map
 
     def generate_heatmap(self, image, similarity_map):
-        """
-        Generate a heatmap overlay on the input image using the similarity map.
-        Args:
-            image (PIL.Image): input image
-            similarity_map (torch.Tensor or np.ndarray): similarity map (2D)
-        Returns:
-            PIL.Image: heatmap overlay
-        """
-
         # Ensure similarity map is a numpy array
         if isinstance(similarity_map, torch.Tensor):
             similarity_map = similarity_map.detach().cpu().numpy()
@@ -122,7 +111,7 @@ class CLIPBackend:
 
         # Apply colormap
         cmap = plt.get_cmap('jet')
-        colored_map = np.array(cmap(np.array(similarity_map)/255.0))[:, :, :3]  # Drop alpha channel
+        colored_map = np.array(cmap(np.array(similarity_map) / 255.0))[:, :, :3]  # Drop alpha channel
 
         # Convert back to PIL
         colored_map = (colored_map * 255).astype(np.uint8)
@@ -133,9 +122,11 @@ class CLIPBackend:
 
         return overlay
 
+
 # Initialize FastAPI
 app = FastAPI()
 clip_backend = CLIPBackend()
+
 
 @app.post("/classify_image")
 async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form(False)):
@@ -149,7 +140,8 @@ async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form
         }
 
         if show_heatmap:
-            heatmap = clip_backend.generate_heatmap(image)
+            similarity_map = clip_backend.get_similarity_map(image)
+            heatmap = clip_backend.generate_heatmap(image, similarity_map)
             buffered = BytesIO()
             heatmap.save(buffered, format="JPEG")
             heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -161,14 +153,16 @@ async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form
         logging.error(f"Error classifying image: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
 
+
 @app.post("/search_images")
-async def search_images(query: Optional[str] = Form(None), file: Optional[UploadFile] = File(None), show_heatmap: bool = Form(False)):
+async def search_images(query: Optional[str] = Form(None), file: Optional[UploadFile] = File(None),
+                        top_k: int = Form(10), show_heatmap: bool = Form(False)):
     try:
         if query:
-            results = await clip_backend.search_images(query=query)
+            results = await clip_backend.search_images(query=query, top_k=top_k)
         elif file:
             image = Image.open(BytesIO(await file.read())).convert('RGB')
-            results = await clip_backend.search_images(query_image=image)
+            results = await clip_backend.search_images(query_image=image, top_k=top_k)
         else:
             raise HTTPException(status_code=400, detail="Please provide either a text query or an image.")
 
@@ -187,7 +181,8 @@ async def search_images(query: Optional[str] = Form(None), file: Optional[Upload
             }
 
             if show_heatmap:
-                heatmap = clip_backend.generate_heatmap(img_pil)
+                similarity_map = clip_backend.get_similarity_map(img_pil)
+                heatmap = clip_backend.generate_heatmap(img_pil, similarity_map)
                 heatmap_buffered = BytesIO()
                 heatmap.save(heatmap_buffered, format="JPEG")
                 heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(heatmap_buffered.getvalue()).decode('utf-8')

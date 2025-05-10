@@ -1,4 +1,4 @@
-from utils.gradio_temp import create_interface
+from utils.gradio_temp import  create_interface
 from scripts.preprocess_data import preprocess_dataset
 from utils.database import Database
 import os
@@ -11,14 +11,18 @@ def main():
         print("Preprocessing data...")
         preprocess_dataset()
 
-
+    # 2. Инициализация базы данных
     db = Database()
-    db.create_tables()
-    atexit.register(db.close_all)
+    db.create_tables()  # Создание таблиц в базе данных
+    atexit.register(db.close_all)  # Регистрация закрытия соединений при завершении работы
 
-    app = create_interface()  # Без db
-    app.launch()
+    # 3. Создание интерфейса
+    app = create_interface()  # Использование функции create_interface из app.py
 
+    if app is not None:
+        app.launch()  # Запуск интерфейса
+    else:
+        print("Ошибка: интерфейс не создан.")
 
 if __name__ == "__main__":
     main()
