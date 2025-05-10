@@ -1,4 +1,5 @@
 import logging
+import time
 import torch
 import numpy as np
 import faiss
@@ -11,9 +12,15 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from io import BytesIO
 import base64
 import asyncio
+from fastapi import Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from utils.database import Database
+import secrets
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+
+
 
 class CLIPBackend:
     def __init__(self):
@@ -126,6 +133,15 @@ class CLIPBackend:
 # Initialize FastAPI
 app = FastAPI()
 clip_backend = CLIPBackend()
+security = HTTPBasic()
+db = Database()
+
+
+def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> int:
+    user_id, role = db.authenticate_user(credentials.username, credentials.password)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return user_id
 
 
 @app.post("/classify_image")
@@ -155,25 +171,39 @@ async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form
 
 
 @app.post("/search_images")
-async def search_images(query: Optional[str] = Form(None), file: Optional[UploadFile] = File(None),
-                        top_k: int = Form(10), show_heatmap: bool = Form(False)):
+
+async def search_images(
+    query: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    top_k: int = Form(10),
+    show_heatmap: bool = Form(False),
+    user_id: int = Depends(get_current_user)
+):
     try:
         if query:
             results = await clip_backend.search_images(query=query, top_k=top_k)
+            query_text = query
         elif file:
             image = Image.open(BytesIO(await file.read())).convert('RGB')
             results = await clip_backend.search_images(query_image=image, top_k=top_k)
+            query_text = "[IMAGE]"
         else:
             raise HTTPException(status_code=400, detail="Please provide either a text query or an image.")
 
         response = []
 
-        for img_tensor, similarity_score in results:
+        for idx, (img_tensor, similarity_score) in enumerate(results):
             img_pil = clip_backend.tensor_to_pil(img_tensor)
-
             buffered = BytesIO()
             img_pil.save(buffered, format="JPEG")
             img_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            # Save each result image (you can adjust the saving path)
+            image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
+            img_pil.save(image_path)
+
+            # Save to DB
+            db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
 
             result = {
                 "similarity": similarity_score,

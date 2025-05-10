@@ -1,1 +1,1 @@
-ALTER USER postgres WITH PASSWORD '050228';
+INSERT INTO users (username, password, role) VALUES (azamat, 123456, admin)
