@@ -142,35 +142,42 @@ class Database:
             (query_text, image_path, user_id)
         )
 
-    def save_classification(self, user_id, image_path, top_classes, top_probs, timestamp):
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "INSERT INTO classifications (user_id, image_path, top_classes, top_probs, timestamp) VALUES (?, ?, ?, ?, ?)",
+    def save_classification(self, user_id, image_path, top_classes, top_probs, timestamp=None):
+        timestamp = timestamp or int(time.time())
+        self.execute_query(
+            """
+            INSERT INTO classifications (user_id, image_path, top_classes, top_probs, timestamp)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
             (user_id, image_path, ','.join(top_classes), ','.join(map(str, top_probs)), timestamp)
         )
-        self.conn.commit()
 
     def get_recent_classifications(self, user_id):
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT image_path, top_classes, top_probs, timestamp FROM classifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10",
-            (user_id,)
+        results = self.execute_query(
+            """
+            SELECT image_path, top_classes, top_probs, timestamp
+            FROM classifications
+            WHERE user_id = %s
+            ORDER BY timestamp DESC
+            LIMIT 10
+            """,
+            (user_id,),
+            fetch=True
         )
-        rows = cursor.fetchall()
-        results = []
-        for row in rows:
-            results.append({
+        classifications = []
+        for row in results:
+            classifications.append({
                 "image_path": row[0],
                 "top_classes": row[1].split(','),
                 "top_probs": list(map(float, row[2].split(','))),
                 "timestamp": row[3]
             })
-        return results
+        return classifications
 
     def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
         if user_id:
             query = """
-                    SELECT q.query_text, q.image_path, u.username, q.timestamp
+                    SELECT q.query_text, u.username, q.timestamp
                     FROM queries q
                              LEFT JOIN users u ON q.user_id = u.id
                     WHERE q.user_id = %s
@@ -180,7 +187,7 @@ class Database:
             params = (user_id, limit)
         else:
             query = """
-                    SELECT q.query_text, q.image_path, u.username, q.timestamp
+                    SELECT q.query_text, u.username, q.timestamp
                     FROM queries q
                              LEFT JOIN users u ON q.user_id = u.id
                     ORDER BY q.timestamp DESC

@@ -11,6 +11,25 @@ backend = CLIPBackend()
 db = Database()
 db.create_tables()
 
+def load_recent_queries(user_id, username):
+    if user_id is None:
+        raise gr.Error("🔒 Please log in to view recent queries.")
+    rows = db.get_recent_queries(user_id=user_id)
+    return "\n".join([f"{row[3]} | {row[0]} | {row[1]}" for row in rows]) if rows else "No recent queries."
+
+def load_recent_classifications(user_id, username):
+    if user_id is None:
+        raise gr.Error("🔒 Please log in to view recent classifications.")
+    rows = db.get_recent_classifications(user_id)
+    if not rows:
+        return "No recent classifications."
+    formatted = []
+    for r in rows:
+        formatted.append(
+            f"{r['timestamp']} | {r['image_path']} | Classes: {', '.join(r['top_classes'])} | Probs: {', '.join(map(str, r['top_probs']))}"
+        )
+    return "\n".join(formatted)
+
 
 # Helper to plot classification results
 def create_classification_plot(probs, class_names):
@@ -55,12 +74,13 @@ def classify_image(image, user_id, username, class_names=None):
         raise gr.Error("🖼️ Please upload an image.")
 
     probs, classes = backend.classify_image(image, class_names)
-    plot = create_classification_plot(probs, classes)
     similarity_map = backend.get_similarity_map(image)
-    heatmap = backend.generate_heatmap(image, similarity_map)
+    # Format probabilities as percentage strings
+    results_text = "\n".join([f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(classes, probs)])
 
     db.save_query("Image Classification", "image_classification.png", user_id)
-    return plot, heatmap
+    return results_text
+
 
 
 # Search function
@@ -76,18 +96,15 @@ async def search_images(query, query_image, top_k, user_id, username):
 
     results = await backend.search_images(query=query, query_image=query_image, top_k=top_k)
     images_with_labels = []
-    heatmaps = []
 
     for img_tensor, score in results:
         pil_img = backend.tensor_to_pil(img_tensor)
         label = f"Similarity: {score:.2f}"
         similarity_map = backend.get_similarity_map(pil_img)
-        heatmap = backend.generate_heatmap(pil_img, similarity_map)
         images_with_labels.append((pil_img, label))
-        heatmaps.append(heatmap)
 
     db.save_query(query if query else "Image Search", "search_image.png", user_id)
-    return images_with_labels, heatmaps
+    return images_with_labels
 
 
 # Suggest dropdown
@@ -132,8 +149,6 @@ def create_interface():
                     with gr.Column():
                         results_gallery = gr.Gallery(label="Search Results", columns=[2], object_fit="contain",
                                                      allow_preview=True)
-                        heatmap_gallery = gr.Gallery(label="Heatmaps", columns=[2], object_fit="contain",
-                                                     allow_preview=True)
 
                 text_input.focus(fn=suggest_queries, inputs=[], outputs=[dropdown])
                 dropdown.change(fn=fill_textbox, inputs=[dropdown], outputs=[text_input])
@@ -142,8 +157,29 @@ def create_interface():
                 search_btn.click(
                     fn=search_images_wrapper,
                     inputs=[text_input, image_query, top_k_input, user_id_state, username_state],
-                    outputs=[results_gallery, heatmap_gallery]
+                    outputs=[results_gallery]
                 )
+
+                with gr.Tab("Recent Activity"):
+                    with gr.Row():
+                        queries_btn = gr.Button("🔍 Show Recent Queries")
+                        classifications_btn = gr.Button("📊 Show Recent Classifications")
+                    with gr.Row():
+                        recent_queries_output = gr.Textbox(label="Recent Queries", lines=8, interactive=False)
+                        recent_classifications_output = gr.Textbox(label="Recent Classifications", lines=8,
+                                                                   interactive=False)
+
+                    queries_btn.click(
+                        fn=load_recent_queries,
+                        inputs=[user_id_state, username_state],
+                        outputs=[recent_queries_output]
+                    )
+
+                    classifications_btn.click(
+                        fn=load_recent_classifications,
+                        inputs=[user_id_state, username_state],
+                        outputs=[recent_classifications_output]
+                    )
 
         with gr.Row(visible=False) as classify_section:
             with gr.Tab("Classification"):
@@ -152,13 +188,13 @@ def create_interface():
                         classify_input = gr.Image(label="Upload Image", type="pil")
                         classify_btn = gr.Button("Classify")
                     with gr.Column():
-                        classify_output_plot = gr.Plot(label="Classification Results")
-                        classify_output_heatmap = gr.Image(label="Generated Heatmap", type="pil")
+                        classify_output_text = gr.Textbox(label="Top Class Probabilities", lines=6, interactive=False)
+
 
                 classify_btn.click(
                     fn=classify_image,
                     inputs=[classify_input, user_id_state, username_state],
-                    outputs=[classify_output_plot, classify_output_heatmap]
+                    outputs=[classify_output_text]
                 )
 
         # Login & Register Button Logic

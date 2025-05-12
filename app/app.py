@@ -102,20 +102,6 @@ class CLIPBackend:
         similarity_map = similarity_map.reshape(16, 32)  # Assuming 512-D features
         return similarity_map
 
-    def generate_heatmap(self, image, similarity_map):
-        if isinstance(similarity_map, torch.Tensor):
-            similarity_map = similarity_map.detach().cpu().numpy()
-
-        similarity_map = (similarity_map - similarity_map.min()) / (similarity_map.max() - similarity_map.min() + 1e-6)
-        similarity_map = Image.fromarray((similarity_map * 255).astype(np.uint8)).resize(image.size, resample=Image.BICUBIC)
-
-        cmap = plt.get_cmap('jet')
-        colored_map = np.array(cmap(np.array(similarity_map) / 255.0))[:, :, :3]
-        colored_map = (colored_map * 255).astype(np.uint8)
-        heatmap = Image.fromarray(colored_map)
-
-        overlay = Image.blend(image.convert('RGB'), heatmap, alpha=0.5)
-        return overlay
 
 # Initialize FastAPI
 app = FastAPI()
@@ -141,7 +127,6 @@ async def get_recent_queries(user_id: int = Depends(get_current_user)):
 @app.post("/classify_image")
 async def classify_image(
     file: UploadFile = File(...),
-    show_heatmap: bool = Form(False),
     user_id: int = Depends(get_current_user)
 ):
     try:
@@ -152,14 +137,6 @@ async def classify_image(
             "top_probs": top_probs,
             "top_classes": top_classes,
         }
-
-        if show_heatmap:
-            similarity_map = clip_backend.get_similarity_map(image)
-            heatmap = clip_backend.generate_heatmap(image, similarity_map)
-            buffered = BytesIO()
-            heatmap.save(buffered, format="JPEG")
-            heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
-            response["heatmap_base64"] = heatmap_base64
 
         db.save_classification(user_id, top_probs, top_classes)
 
@@ -183,7 +160,6 @@ async def search_images(
     query: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     top_k: int = Form(10),
-    show_heatmap: bool = Form(False),
     user_id: int = Depends(get_current_user)
 ):
     try:
@@ -214,14 +190,6 @@ async def search_images(
                 "similarity": similarity_score,
                 "image_base64": img_base64
             }
-
-            if show_heatmap:
-                similarity_map = clip_backend.get_similarity_map(img_pil)
-                heatmap = clip_backend.generate_heatmap(img_pil, similarity_map)
-                heatmap_buffered = BytesIO()
-                heatmap.save(heatmap_buffered, format="JPEG")
-                heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(heatmap_buffered.getvalue()).decode('utf-8')
-                result["heatmap_base64"] = heatmap_base64
 
             response.append(result)
 
