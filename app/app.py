@@ -11,10 +11,8 @@ from typing import List, Optional, Tuple
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from io import BytesIO
 import base64
-import asyncio
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from utils.database import Database
-
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -208,6 +206,7 @@ async def search_images(
             image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
             img_pil.save(image_path)
 
+            # Сохраняем запрос в таблицу search_logs
             db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
 
             result = {
