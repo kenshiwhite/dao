@@ -8,19 +8,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from models.clip_model import CLIPModel
 from typing import List, Optional, Tuple
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from io import BytesIO
 import base64
 import asyncio
-from fastapi import Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from utils.database import Database
-import secrets
+
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
-
-
 
 class CLIPBackend:
     def __init__(self):
@@ -106,29 +103,19 @@ class CLIPBackend:
         return similarity_map
 
     def generate_heatmap(self, image, similarity_map):
-        # Ensure similarity map is a numpy array
         if isinstance(similarity_map, torch.Tensor):
             similarity_map = similarity_map.detach().cpu().numpy()
 
-        # Normalize similarity map to 0-1
         similarity_map = (similarity_map - similarity_map.min()) / (similarity_map.max() - similarity_map.min() + 1e-6)
-
-        # Resize similarity map to match image size
         similarity_map = Image.fromarray((similarity_map * 255).astype(np.uint8)).resize(image.size, resample=Image.BICUBIC)
 
-        # Apply colormap
         cmap = plt.get_cmap('jet')
-        colored_map = np.array(cmap(np.array(similarity_map) / 255.0))[:, :, :3]  # Drop alpha channel
-
-        # Convert back to PIL
+        colored_map = np.array(cmap(np.array(similarity_map) / 255.0))[:, :, :3]
         colored_map = (colored_map * 255).astype(np.uint8)
         heatmap = Image.fromarray(colored_map)
 
-        # Blend the heatmap with the original image
         overlay = Image.blend(image.convert('RGB'), heatmap, alpha=0.5)
-
         return overlay
-
 
 # Initialize FastAPI
 app = FastAPI()
@@ -136,16 +123,27 @@ clip_backend = CLIPBackend()
 security = HTTPBasic()
 db = Database()
 
-
 def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> int:
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return user_id
 
+@app.get("/recent_queries")
+async def get_recent_queries(user_id: int = Depends(get_current_user)):
+    try:
+        recent_queries = db.get_recent_queries(user_id)
+        return {"recent_queries": recent_queries}
+    except Exception as e:
+        logging.error(f"Error fetching recent queries: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching recent queries.")
 
 @app.post("/classify_image")
-async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form(False)):
+async def classify_image(
+    file: UploadFile = File(...),
+    show_heatmap: bool = Form(False),
+    user_id: int = Depends(get_current_user)
+):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         top_probs, top_classes = clip_backend.classify_image(image)
@@ -163,15 +161,24 @@ async def classify_image(file: UploadFile = File(...), show_heatmap: bool = Form
             heatmap_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
             response["heatmap_base64"] = heatmap_base64
 
+        db.save_classification(user_id, top_probs, top_classes)
+
         return response
 
     except Exception as e:
         logging.error(f"Error classifying image: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
 
+@app.get("/recent_classifications")
+async def get_recent_classifications(user_id: int = Depends(get_current_user)):
+    try:
+        classifications = db.get_recent_classifications(user_id)
+        return {"recent_classifications": classifications}
+    except Exception as e:
+        logging.error(f"Error fetching recent classifications: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching classifications.")
 
 @app.post("/search_images")
-
 async def search_images(
     query: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
@@ -198,11 +205,9 @@ async def search_images(
             img_pil.save(buffered, format="JPEG")
             img_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-            # Save each result image (you can adjust the saving path)
             image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
             img_pil.save(image_path)
 
-            # Save to DB
             db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
 
             result = {

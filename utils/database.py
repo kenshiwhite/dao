@@ -92,6 +92,49 @@ class Database:
                            )
                            """)
 
+        self.execute_query("""
+                           CREATE TABLE IF NOT EXISTS classifications
+                           (
+                               id          SERIAL PRIMARY KEY,
+                               user_id     INTEGER NOT NULL,
+                               image_path  TEXT    NOT NULL,
+                               top_classes TEXT    NOT NULL,
+                               top_probs   TEXT    NOT NULL,
+                               timestamp   INTEGER NOT NULL
+                           );
+                           """)
+
+        self.execute_query("""
+                           CREATE TABLE IF NOT EXISTS favorites (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    image_path TEXT NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, image_path) 
+);
+
+                           """)
+
+        def add_to_favorites(self, user_id: int, image_path: str):
+            self.execute_query(
+                "INSERT INTO favorites (user_id, image_path) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                (user_id, image_path)
+            )
+
+        def remove_from_favorites(self, user_id: int, image_path: str):
+            self.execute_query(
+                "DELETE FROM favorites WHERE user_id = %s AND image_path = %s",
+                (user_id, image_path)
+            )
+
+        def get_favorites(self, user_id: int) -> List[str]:
+            results = self.execute_query(
+                "SELECT image_path FROM favorites WHERE user_id = %s ORDER BY added_at DESC",
+                (user_id,),
+                fetch=True
+            )
+            return [row[0] for row in results] if results else []
+
     def save_query(self, query_text: str, image_path: str, user_id: int):
         """Сохранение одного запроса в базу данных."""
         self.execute_query(
@@ -99,13 +142,53 @@ class Database:
             (query_text, image_path, user_id)
         )
 
-    def get_recent_queries(self, limit: int = 10) -> List[Tuple[str, str]]:
-        """Получение последних запросов."""
-        results = self.execute_query(
-            "SELECT query_text, image_path FROM queries ORDER BY timestamp DESC LIMIT %s",
-            (limit,),
-            fetch=True
+    def save_classification(self, user_id, image_path, top_classes, top_probs, timestamp):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "INSERT INTO classifications (user_id, image_path, top_classes, top_probs, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (user_id, image_path, ','.join(top_classes), ','.join(map(str, top_probs)), timestamp)
         )
+        self.conn.commit()
+
+    def get_recent_classifications(self, user_id):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT image_path, top_classes, top_probs, timestamp FROM classifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10",
+            (user_id,)
+        )
+        rows = cursor.fetchall()
+        results = []
+        for row in rows:
+            results.append({
+                "image_path": row[0],
+                "top_classes": row[1].split(','),
+                "top_probs": list(map(float, row[2].split(','))),
+                "timestamp": row[3]
+            })
+        return results
+
+    def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
+        if user_id:
+            query = """
+                    SELECT q.query_text, q.image_path, u.username, q.timestamp
+                    FROM queries q
+                             LEFT JOIN users u ON q.user_id = u.id
+                    WHERE q.user_id = %s
+                    ORDER BY q.timestamp DESC
+                    LIMIT %s \
+                    """
+            params = (user_id, limit)
+        else:
+            query = """
+                    SELECT q.query_text, q.image_path, u.username, q.timestamp
+                    FROM queries q
+                             LEFT JOIN users u ON q.user_id = u.id
+                    ORDER BY q.timestamp DESC
+                    LIMIT %s \
+                    """
+            params = (limit,)
+
+        results = self.execute_query(query, params, fetch=True)
         return results if results else []
 
     def register_user(self, username: str, password: str, role: str = 'user'):
