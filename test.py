@@ -1,19 +1,33 @@
 import torch
-from torch.utils.data import DataLoader
-from pycocotools.coco import COCO
-from torchvision.datasets import CocoDetection
-from models.clip_model import CLIPModel
-from tqdm import tqdm
-import os
-import requests
-import zipfile
 from PIL import Image
 from torchvision import transforms
+from pathlib import Path
 
-dataset = torch.utils.data.Subset(dataset, range(1000))
-# In preprocess_data.py after dataset creation
+# Paths
+base_dir = Path(__file__).parent
+images_path = base_dir / "scripts" / "data" / "saved_images.pt"
 
-print("\n=== DATASET VERIFICATION ===")
-print(f"Dataset class: {type(dataset).__name__}")  # Should show CocoDetection
-print(f"Number of images: {len(dataset)}")  # CIFAR=50k, COCO=118k train images
-print(f"Sample annotation keys: {dataset.coco.dataset.keys()}")  # COCO-specific keys
+# Load
+images = torch.load(images_path, weights_only=False)
+print(f"Loaded {len(images)} images")
+
+# Convert all to tensors (if any PILs exist)
+preprocess = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+])
+
+images_tensor = []
+
+for img in images:
+    if isinstance(img, Image.Image):
+        img = preprocess(img)
+    elif isinstance(img, torch.Tensor):
+        pass  # already fine
+    else:
+        raise TypeError("Invalid image type:", type(img))
+    images_tensor.append(img)
+
+# Save cleaned
+torch.save(images_tensor, images_path)
+print("✅ Saved cleaned image list (as tensors only)")
