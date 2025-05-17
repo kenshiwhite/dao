@@ -1,3 +1,4 @@
+from fastapi import status
 import logging
 import time
 import torch
@@ -44,7 +45,32 @@ class CLIPBackend:
         self.index = faiss.IndexFlatL2(self.all_features.shape[1])
         self.index.add(self.all_features)
 
-    def load_precomputed_data(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def add_image_to_index(self, image: Image.Image):
+        """Encode and add a new image to the current index and memory."""
+        with torch.no_grad():
+            # Preprocess and save tensor, not PIL
+            image_tensor = self.clip_model.preprocess(image)  # shape: [3, 224, 224]
+            image_feature = self.clip_model.encode_image(image).cpu()  # [1, 512]
+
+        # Append to in-memory features and images
+        self.all_features = torch.cat([self.all_features, image_feature], dim=0)
+        self.all_images.append(image_tensor)  # now storing as tensor again ✅
+
+        # Update FAISS index
+        self.index.add(image_feature.numpy())
+
+        # Save to disk
+        script_dir = Path(__file__).parent
+        base_dir = script_dir.parent
+        features_path = base_dir / "scripts" / "data" / "saved_features.pt"
+        images_path = base_dir / "scripts" / "data" / "saved_images.pt"
+
+        torch.save(self.all_features, features_path)
+        torch.save(self.all_images, images_path)
+
+        logging.info("New image added to index and saved.")
+
+    def load_precomputed_data(self) -> Tuple[torch.Tensor, List[Image.Image]]:
         script_dir = Path(__file__).parent
         base_dir = script_dir.parent
         features_path = base_dir / "scripts" / "data" / "saved_features.pt"
@@ -53,8 +79,11 @@ class CLIPBackend:
         if not features_path.exists() or not images_path.exists():
             raise FileNotFoundError("Precomputed data not found. Please check your paths.")
 
-        features = torch.load(str(features_path))
-        images = torch.load(str(images_path))
+        features = torch.load(str(features_path), weights_only=False)
+        images = torch.load(str(images_path), weights_only=False)
+
+        if isinstance(images, torch.Tensor):
+            images = list(images)  # in case it's saved as a single tensor block
         return features, images
 
     def classify_image(self, image: Image.Image, class_names: Optional[List[str]] = None) -> Tuple[List[float], List[str]]:
@@ -116,6 +145,28 @@ def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> i
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return user_id
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
+    user_id, role = db.authenticate_user(credentials.username, credentials.password)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required.")
+    return user_id
+
+@app.post("/admin/upload_image", status_code=status.HTTP_201_CREATED)
+async def admin_upload_image(
+    file: UploadFile = File(...),
+    user_id: int = Depends(verify_admin)
+):
+    try:
+        image = Image.open(BytesIO(await file.read())).convert('RGB')
+        clip_backend.add_image_to_index(image)
+        return {"detail": "Image uploaded and added to index."}
+    except Exception as e:
+        logging.error(f"Admin upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload and index image.")
+
 
 @app.get("/recent_queries")
 async def get_recent_queries(user_id: int = Depends(get_current_user)):

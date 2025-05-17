@@ -5,22 +5,19 @@ import os
 import atexit
 
 def main():
-    # 1. Предобработка данных (если нет сохранённых файлов)
     if not (os.path.exists("scripts/data/saved_features.pt") and
             os.path.exists("scripts/data/saved_images.pt")):
         print("Preprocessing data...")
         preprocess_dataset()
 
-    # 2. Инициализация базы данных
     db = Database()
-    db.create_tables()  # Создание таблиц в базе данных
-    atexit.register(db.close_all)  # Регистрация закрытия соединений при завершении работы
+    db.create_tables()
+    atexit.register(db.close_all)
 
-    # 3. Создание интерфейса
-    app = create_interface()  # Использование функции create_interface из app.py
+    app = create_interface()
 
     if app is not None:
-        app.launch()  # Запуск интерфейса
+        app.launch()
     else:
         print("Ошибка: интерфейс не создан.")
 
