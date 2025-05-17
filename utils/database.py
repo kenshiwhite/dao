@@ -115,6 +115,26 @@ class Database:
 
                            """)
 
+        # Таблица отзывов
+        self.execute_query("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id SERIAL PRIMARY KEY,
+                user_name TEXT NOT NULL,
+                feedback_text  TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        def save_feedback(self, user_id: int, feedback_text: str):
+            query = "INSERT INTO feedback (user_id, feedback_text) VALUES (?, ?)"
+            self.cursor.execute(query, (user_id, feedback_text))
+            self.connection.commit()
+
+        def get_feedbacks(self, user_id: int):
+            query = "SELECT feedback_text, created_at FROM feedback WHERE user_id = ? ORDER BY created_at DESC"
+            self.cursor.execute(query, (user_id,))
+            return self.cursor.fetchall()
+
         def add_to_favorites(self, user_id: int, image_path: str):
             self.execute_query(
                 "INSERT INTO favorites (user_id, image_path) VALUES (%s, %s) ON CONFLICT DO NOTHING",
@@ -166,6 +186,21 @@ class Database:
                 "timestamp": row[3]
             })
         return results
+
+    def get_top_queries(self, limit: int = 3) -> List[Tuple[str, int]]:
+        """
+        Возвращает top N самых частых текстов запросов из таблицы queries.
+        Возвращает список кортежей (query_text, count).
+        """
+        query = """
+                SELECT query_text, COUNT(*) AS count
+                FROM queries
+                GROUP BY query_text
+                ORDER BY count DESC
+                LIMIT %s \
+                """
+        results = self.execute_query(query, (limit,), fetch=True)
+        return results if results else []
 
     def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
         if user_id:

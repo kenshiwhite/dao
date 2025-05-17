@@ -13,6 +13,10 @@ from io import BytesIO
 import base64
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from utils.database import Database
+from pydantic import BaseModel
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+from typing import List, Tuple
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -144,6 +148,27 @@ async def classify_image(
         logging.error(f"Error classifying image: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
 
+class FeedbackRequest(BaseModel):
+    feedback_text: str
+
+@app.post("/feedback")
+async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
+    try:
+        db.save_feedback(user_id, feedback.feedback_text)
+        return {"message": "Thank you for your feedback!"}
+    except Exception as e:
+        logging.error(f"Error saving feedback: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error saving feedback.")
+
+@app.get("/feedback")
+async def get_feedback(user_id: int = Depends(get_current_user)):
+    try:
+        feedbacks = db.get_feedbacks(user_id)
+        return {"feedbacks": feedbacks}
+    except Exception as e:
+        logging.error(f"Error retrieving feedbacks: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching feedbacks.")
+
 @app.get("/recent_classifications")
 async def get_recent_classifications(user_id: int = Depends(get_current_user)):
     try:
@@ -152,6 +177,17 @@ async def get_recent_classifications(user_id: int = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"Error fetching recent classifications: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching classifications.")
+
+@app.get("/top-queries")
+def get_most_searched_queries(limit: int = 3):
+    try:
+        
+        top_queries: List[Tuple[str, int]] = db.get_top_queries(limit=limit)
+        return JSONResponse(content={
+            "top_queries": [{"query": q, "count": c} for q, c in top_queries]
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/search_images")
 async def search_images(
