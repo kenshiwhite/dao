@@ -1,3 +1,4 @@
+#app.py
 from fastapi import status
 import logging
 import time
@@ -186,12 +187,17 @@ async def classify_image(
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         top_probs, top_classes = clip_backend.classify_image(image)
 
+        # Create a unique image path for this classification
+        image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
+        image.save(image_path)  # Save the image
+
         response = {
             "top_probs": top_probs,
             "top_classes": top_classes,
         }
 
-        db.save_classification(user_id, top_probs, top_classes)
+        # Save the classification results to the database
+        db.save_classification(user_id, image_path, top_classes, top_probs, int(time.time()))
 
         return response
 
@@ -232,7 +238,6 @@ async def get_recent_classifications(user_id: int = Depends(get_current_user)):
 @app.get("/top-queries")
 def get_most_searched_queries(limit: int = 3):
     try:
-        
         top_queries: List[Tuple[str, int]] = db.get_top_queries(limit=limit)
         return JSONResponse(content={
             "top_queries": [{"query": q, "count": c} for q, c in top_queries]

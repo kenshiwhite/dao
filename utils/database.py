@@ -10,6 +10,7 @@ import hashlib
 # Загружаем переменные окружения из .env
 load_dotenv()
 
+
 class Database:
     def __init__(self, max_retries: int = 3, retry_delay: int = 1):
         self.max_retries = max_retries
@@ -106,54 +107,39 @@ class Database:
 
         self.execute_query("""
                            CREATE TABLE IF NOT EXISTS favorites (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    image_path TEXT NOT NULL,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, image_path) 
-);
-
+                               id SERIAL PRIMARY KEY,
+                               user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                               image_path TEXT NOT NULL,
+                               added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                               UNIQUE(user_id, image_path) 
+                           );
                            """)
 
-        # Таблица отзывов
+        # Таблица отзывов - исправляем поле user_name на user_id для согласованности
         self.execute_query("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id SERIAL PRIMARY KEY,
-                user_name TEXT NOT NULL,
-                feedback_text  TEXT NOT NULL,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                feedback_text TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-        def save_feedback(self, user_id: int, feedback_text: str):
-            query = "INSERT INTO feedback (user_id, feedback_text) VALUES (?, ?)"
-            self.cursor.execute(query, (user_id, feedback_text))
-            self.connection.commit()
+    def save_feedback(self, user_id: int, feedback_text: str):
+        """Сохранение отзыва пользователя."""
+        self.execute_query(
+            "INSERT INTO feedback (user_id, feedback_text) VALUES (%s, %s)",
+            (user_id, feedback_text)
+        )
 
-        def get_feedbacks(self, user_id: int):
-            query = "SELECT feedback_text, created_at FROM feedback WHERE user_id = ? ORDER BY created_at DESC"
-            self.cursor.execute(query, (user_id,))
-            return self.cursor.fetchall()
-
-        def add_to_favorites(self, user_id: int, image_path: str):
-            self.execute_query(
-                "INSERT INTO favorites (user_id, image_path) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (user_id, image_path)
-            )
-
-        def remove_from_favorites(self, user_id: int, image_path: str):
-            self.execute_query(
-                "DELETE FROM favorites WHERE user_id = %s AND image_path = %s",
-                (user_id, image_path)
-            )
-
-        def get_favorites(self, user_id: int) -> List[str]:
-            results = self.execute_query(
-                "SELECT image_path FROM favorites WHERE user_id = %s ORDER BY added_at DESC",
-                (user_id,),
-                fetch=True
-            )
-            return [row[0] for row in results] if results else []
+    def get_feedbacks(self, user_id: int) -> List[Tuple[str, str]]:
+        """Получение списка отзывов пользователя."""
+        results = self.execute_query(
+            "SELECT feedback_text, created_at FROM feedback WHERE user_id = %s ORDER BY created_at DESC",
+            (user_id,),
+            fetch=True
+        )
+        return results if results else []
 
     def save_query(self, query_text: str, image_path: str, user_id: int):
         """Сохранение одного запроса в базу данных."""
@@ -162,30 +148,6 @@ class Database:
             (query_text, image_path, user_id)
         )
 
-    def save_classification(self, user_id, image_path, top_classes, top_probs, timestamp):
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "INSERT INTO classifications (user_id, image_path, top_classes, top_probs, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (user_id, image_path, ','.join(top_classes), ','.join(map(str, top_probs)), timestamp)
-        )
-        self.conn.commit()
-
-    def get_recent_classifications(self, user_id):
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT image_path, top_classes, top_probs, timestamp FROM classifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10",
-            (user_id,)
-        )
-        rows = cursor.fetchall()
-        results = []
-        for row in rows:
-            results.append({
-                "image_path": row[0],
-                "top_classes": row[1].split(','),
-                "top_probs": list(map(float, row[2].split(','))),
-                "timestamp": row[3]
-            })
-        return results
 
     def get_top_queries(self, limit: int = 3) -> List[Tuple[str, int]]:
         """
@@ -202,7 +164,8 @@ class Database:
         results = self.execute_query(query, (limit,), fetch=True)
         return results if results else []
 
-    def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
+    def get_recent_queries(self, user_id: Optional[int] = None, limit: int = 10) -> List[Tuple]:
+        """Получение последних запросов пользователя или всех пользователей."""
         if user_id:
             query = """
                     SELECT q.query_text, q.image_path, u.username, q.timestamp
@@ -238,7 +201,7 @@ class Database:
         """Хеширование пароля (используем hashlib для примера)."""
         return hashlib.sha256(password.encode()).hexdigest()
 
-    def authenticate_user(self, username: str, password: str):
+    def authenticate_user(self, username: str, password: str) -> Tuple[Optional[int], Optional[str]]:
         """Аутентификация пользователя."""
         user = self.execute_query(
             "SELECT id, password, role FROM users WHERE username = %s",
@@ -251,7 +214,7 @@ class Database:
                 return user_id, role
         return None, None  # Если аутентификация не удалась
 
-    def check_user_role(self, user_id: int):
+    def check_user_role(self, user_id: int) -> str:
         """Проверка роли пользователя для определения прав доступа."""
         role = self.execute_query(
             "SELECT role FROM users WHERE id = %s", (user_id,), fetch=True
