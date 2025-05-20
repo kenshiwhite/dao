@@ -1,24 +1,22 @@
-#app.py
-from fastapi import status
+from fastapi import status, FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional, Tuple
 import logging
-import time
 import torch
 import numpy as np
 import faiss
-from PIL import Image
-from pathlib import Path
-import matplotlib.pyplot as plt
-from models.clip_model import CLIPModel
-from typing import List, Optional, Tuple
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+import time
 from io import BytesIO
+from pathlib import Path
+from PIL import Image
 import base64
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import matplotlib.pyplot as plt
+from torchvision.transforms import transforms
+
+from models.clip_model import CLIPModel
 from utils.database import Database
-from pydantic import BaseModel
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
-from typing import List, Tuple
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -28,43 +26,45 @@ class CLIPBackend:
         self.clip_model = CLIPModel()
         self.all_features, self.all_images = self.load_precomputed_data()
         self.coco_classes = [
-            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
-            'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
-            'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
-            'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella',
-            'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard',
-            'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard',
-            'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork',
-            'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
-            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
-            'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv',
-            'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
-            'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
-            'scissors', 'teddy bear', 'hair drier', 'toothbrush'
+            'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck',
+            'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench',
+            'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra',
+            'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
+            'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove',
+            'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+            'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange',
+            'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'couch',
+            'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+            'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
+            'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
+            'hair drier', 'toothbrush'
         ]
-
         self.index = faiss.IndexFlatL2(self.all_features.shape[1])
         self.index.add(self.all_features)
 
     def add_image_to_index(self, image: Image.Image):
-        """Encode and add a new image to the current index and memory."""
         with torch.no_grad():
-            # Preprocess and save tensor, not PIL
-            image_tensor = self.clip_model.preprocess(image)  # shape: [3, 224, 224]
-            image_feature = self.clip_model.encode_image(image).cpu()  # [1, 512]
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor()
+            ])
+            image_tensor = transform(image)
+            normalize = transforms.Normalize(
+                (0.48145466, 0.4578275, 0.40821073),
+                (0.26862954, 0.26130258, 0.27577711)
+            )
+            normalized_tensor = normalize(image_tensor).unsqueeze(0).to(self.clip_model.device)
+            image_feature = self.clip_model.encode_image(normalized_tensor).cpu()
+            image_tensor_for_storage = image_tensor
 
-        # Append to in-memory features and images
         self.all_features = torch.cat([self.all_features, image_feature], dim=0)
-        self.all_images.append(image_tensor)  # now storing as tensor again ✅
-
-        # Update FAISS index
+        self.all_images.append(image_tensor_for_storage)
         self.index.add(image_feature.numpy())
 
-        # Save to disk
         script_dir = Path(__file__).parent
         base_dir = script_dir.parent
-        features_path = base_dir / "scripts" / "data" / "saved_features.pt"
-        images_path = base_dir / "scripts" / "data" / "saved_images.pt"
+        features_path = base_dir / "data" / "saved_features.pt"
+        images_path = base_dir / "data" / "saved_images.pt"
 
         torch.save(self.all_features, features_path)
         torch.save(self.all_images, images_path)
@@ -74,8 +74,8 @@ class CLIPBackend:
     def load_precomputed_data(self) -> Tuple[torch.Tensor, List[Image.Image]]:
         script_dir = Path(__file__).parent
         base_dir = script_dir.parent
-        features_path = base_dir / "scripts" / "data" / "saved_features.pt"
-        images_path = base_dir / "scripts" / "data" / "saved_images.pt"
+        features_path = base_dir / "data" / "saved_features.pt"
+        images_path = base_dir / "data" / "saved_images.pt"
 
         if not features_path.exists() or not images_path.exists():
             raise FileNotFoundError("Precomputed data not found. Please check your paths.")
@@ -84,7 +84,7 @@ class CLIPBackend:
         images = torch.load(str(images_path), weights_only=False)
 
         if isinstance(images, torch.Tensor):
-            images = list(images)  # in case it's saved as a single tensor block
+            images = list(images)
         return features, images
 
     def classify_image(self, image: Image.Image, class_names: Optional[List[str]] = None) -> Tuple[List[float], List[str]]:
@@ -126,16 +126,8 @@ class CLIPBackend:
         img_np = (img_np * 255).astype('uint8')
         return Image.fromarray(img_np)
 
-    def get_similarity_map(self, pil_img: Image.Image) -> np.ndarray:
-        img_tensor = self.clip_model.preprocess(pil_img).unsqueeze(0).to(self.clip_model.device)
-        with torch.no_grad():
-            features = self.clip_model.encode_image(img_tensor)
-        similarity_map = features.squeeze().cpu().numpy()
-        similarity_map = similarity_map.reshape(16, 32)  # Assuming 512-D features
-        return similarity_map
 
-
-# Initialize FastAPI
+# Initialize app and dependencies
 app = FastAPI()
 clip_backend = CLIPBackend()
 security = HTTPBasic()
@@ -145,7 +137,11 @@ def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> i
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return user_id
+    try:
+        return int(user_id)
+    except ValueError:
+        logging.error(f"Invalid user_id: expected int, got '{user_id}'")
+        raise HTTPException(status_code=500, detail="Internal server error: invalid user ID")
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
@@ -153,13 +149,10 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if role != "admin":
         raise HTTPException(status_code=403, detail="Admin privileges required.")
-    return user_id
+    return int(user_id)
 
 @app.post("/admin/upload_image", status_code=status.HTTP_201_CREATED)
-async def admin_upload_image(
-    file: UploadFile = File(...),
-    user_id: int = Depends(verify_admin)
-):
+async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depends(verify_admin)):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         clip_backend.add_image_to_index(image)
@@ -167,7 +160,6 @@ async def admin_upload_image(
     except Exception as e:
         logging.error(f"Admin upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to upload and index image.")
-
 
 @app.get("/recent_queries")
 async def get_recent_queries(user_id: int = Depends(get_current_user)):
@@ -179,28 +171,17 @@ async def get_recent_queries(user_id: int = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Error fetching recent queries.")
 
 @app.post("/classify_image")
-async def classify_image(
-    file: UploadFile = File(...),
-    user_id: int = Depends(get_current_user)
-):
+async def classify_image(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         top_probs, top_classes = clip_backend.classify_image(image)
-
-        # Create a unique image path for this classification
         image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
-        image.save(image_path)  # Save the image
-
-        response = {
-            "top_probs": top_probs,
-            "top_classes": top_classes,
-        }
-
-        # Save the classification results to the database
+        image.save(image_path)
         db.save_classification(user_id, image_path, top_classes, top_probs, int(time.time()))
-
-        return response
-
+        return {
+            "top_probs": top_probs,
+            "top_classes": top_classes
+        }
     except Exception as e:
         logging.error(f"Error classifying image: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
@@ -209,25 +190,22 @@ class FeedbackRequest(BaseModel):
     feedback_text: str
 
 @app.post("/feedback")
-async def submit_feedback(feedback: FeedbackRequest, user=Depends(get_current_user)):
-    user_id = user["id"]
-    username = user["username"]
+async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
     try:
-        db.save_feedback(user_id, username, feedback.feedback_text)
-        return {"message": "✅ Thank you for your feedback!"}
+        db.save_feedback(user_id, feedback.feedback_text)
+        return {"message": "Thank you for your feedback!"}
     except Exception as e:
         logging.error(f"Error saving feedback: {str(e)}")
-        raise HTTPException(status_code=500, detail="❌ Error saving feedback.")
+        raise HTTPException(status_code=500, detail="Error saving feedback.")
 
 @app.get("/feedback")
-async def get_feedback(user=Depends(get_current_user)):
-    user_id = user["id"]
+async def get_feedback(user_id: int = Depends(get_current_user)):
     try:
         feedbacks = db.get_feedbacks(user_id)
         return {"feedbacks": feedbacks}
     except Exception as e:
         logging.error(f"Error retrieving feedbacks: {str(e)}")
-        raise HTTPException(status_code=500, detail="❌ Error fetching feedbacks.")
+        raise HTTPException(status_code=500, detail="Error fetching feedbacks.")
 
 @app.get("/recent_classifications")
 async def get_recent_classifications(user_id: int = Depends(get_current_user)):
@@ -276,19 +254,15 @@ async def search_images(
 
             image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
             img_pil.save(image_path)
-
-            # Сохраняем запрос в таблицу search_logs
             db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
 
             result = {
                 "similarity": similarity_score,
                 "image_base64": img_base64
             }
-
             response.append(result)
 
         return {"results": response}
-
     except Exception as e:
         logging.error(f"Error searching images: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during search.")

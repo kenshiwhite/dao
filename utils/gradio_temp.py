@@ -11,34 +11,22 @@ backend = CLIPBackend()
 db = Database()
 db.create_tables()
 
-# --- Добавлен метод save_feedback в класс Database ---
-# Пример, как можно добавить в utils/database.py:
-# def save_feedback(self, user_id, username, feedback_text):
-#     query = "INSERT INTO feedback (user_id, username, feedback_text, timestamp) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
-#     self.cursor.execute(query, (user_id, username, feedback_text))
-#     self.connection.commit()
 
 def load_recent_queries(user_id, username):
     if user_id is None:
         raise gr.Error("🔒 Please log in to view recent queries.")
     rows = db.get_recent_queries(user_id=user_id)
-    return "\n".join([f"{row[3]} | {row[0]} | {row[1]}" for row in rows]) if rows else "No recent queries."
+    return "\n".join([f"{row[2]} | {row[0]} | {row[1]}" for row in rows]) if rows else "No recent queries."
 
-def load_recent_classifications(user_id, username):
+
+def load_recent_feedback(user_id, username):
     if user_id is None:
-        raise gr.Error("🔒 Please log in to view recent classifications.")
-    rows = db.get_recent_classifications(user_id)
-    if not rows:
-        return "No recent classifications."
-    formatted = []
-    for r in rows:
-        formatted.append(
-            f"{r['timestamp']} | {r['image_path']} | Classes: {', '.join(r['top_classes'])} | Probs: {', '.join(map(str, r['top_probs']))}"
-        )
-    return "\n".join(formatted)
+        raise gr.Error("🔒 Please log in to view feedback.")
+    feedbacks = db.get_feedbacks(user_id=user_id)
+    return "\n".join(
+        [f"{feedback[1]} | {feedback[0]}" for feedback in feedbacks]) if feedbacks else "No feedback submitted yet."
 
 
-# Helper to plot classification results
 def create_classification_plot(probs, class_names):
     fig, ax = plt.subplots(figsize=(10, 5))
     y_pos = np.arange(len(probs))
@@ -52,7 +40,6 @@ def create_classification_plot(probs, class_names):
     return fig
 
 
-# Register new user
 def register_user(username, password):
     if not username or not password:
         return "❌ Username and password cannot be empty."
@@ -65,15 +52,33 @@ def register_user(username, password):
         return f"❌ Registration failed: {str(e)}"
 
 
-# Login user
 def login_user(username, password):
     user_id, role = db.authenticate_user(username, password)
     if user_id is None:
-        return gr.update(visible=False), gr.update(visible=False), "❌ Invalid credentials.", None, None
-    return gr.update(visible=True), gr.update(visible=True), f"✅ Welcome, {username}!", user_id, username
+        return (
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            "❌ Invalid credentials.",
+            None,
+            None,
+            None
+        )
+
+    is_admin = role == "admin"
+    return (
+        gr.update(visible=True),  # search_section
+        gr.update(visible=True),  # classify_section
+        gr.update(visible=is_admin),  # admin_section
+        gr.update(visible=True),  # feedback_section
+        f"✅ Welcome, {username}!",
+        user_id,
+        username,
+        password  # now returning password_state
+    )
 
 
-# Classification function
 def classify_image(image, user_id, username, class_names=None):
     if user_id is None:
         raise gr.Error("🔒 Please log in to classify images.")
@@ -81,15 +86,12 @@ def classify_image(image, user_id, username, class_names=None):
         raise gr.Error("🖼️ Please upload an image.")
 
     probs, classes = backend.classify_image(image, class_names)
-    similarity_map = backend.get_similarity_map(image)
-    # Format probabilities as percentage strings
     results_text = "\n".join([f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(classes, probs)])
 
     db.save_query("Image Classification", "image_classification.png", user_id)
     return results_text
 
 
-# Search function
 def search_images_wrapper(query, query_image, top_k, user_id, username):
     return asyncio.run(search_images(query, query_image, top_k, user_id, username))
 
@@ -106,14 +108,24 @@ async def search_images(query, query_image, top_k, user_id, username):
     for img_tensor, score in results:
         pil_img = backend.tensor_to_pil(img_tensor)
         label = f"Similarity: {score:.2f}"
-        similarity_map = backend.get_similarity_map(pil_img)
         images_with_labels.append((pil_img, label))
 
     db.save_query(query if query else "Image Search", "search_image.png", user_id)
     return images_with_labels
 
 
-# Suggest dropdown
+def submit_feedback(feedback_text, user_id, username):
+    if user_id is None:
+        raise gr.Error("🔒 Please log in to submit feedback.")
+    if not feedback_text:
+        raise gr.Error("Please enter some feedback.")
+
+    try:
+        db.save_feedback(user_id, username, feedback_text)
+        return "✅ Thank you for your feedback!", ""
+    except Exception as e:
+        return f"❌ Error saving feedback: {str(e)}", feedback_text
+
 def suggest_queries():
     recent = db.get_recent_queries(limit=5)
     return gr.Dropdown.update(choices=[q[0] for q in recent], visible=True) if recent else gr.Dropdown.update(
@@ -124,38 +136,21 @@ def fill_textbox(choice):
     return gr.Textbox.update(value=choice)
 
 
-# --- Функция для сохранения фидбэка ---
-def save_feedback(user_id, username, feedback_text):
-    if user_id is None:
-        return "🔒 Пожалуйста, войдите, чтобы оставить отзыв."
-    if not feedback_text.strip():
-        return "❌ Отзыв не может быть пустым."
-    try:
-        db.save_feedback(user_id, username, feedback_text)
-        return "✅ Спасибо за ваш отзыв!"
-    except Exception as e:
-        return f"❌ Ошибка при сохранении отзыва: {str(e)}"
-
-
-# Interface definition
 def create_interface():
     with gr.Blocks(title="CLIP Auth Image Search") as demo:
         gr.Markdown("# 🖼️ CLIP Image Search & Classification with 🔐 Authentication")
 
-        # --- Login/Register ---
-        with gr.Row():
-            login_username = gr.Textbox(label="Username")
-            login_password = gr.Textbox(label="Password", type="password")
-        with gr.Row():
-            login_btn = gr.Button("Login")
-            register_btn = gr.Button("Register")
+        login_username = gr.Textbox(label="Username")
+        login_password = gr.Textbox(label="Password", type="password")
+        login_btn = gr.Button("Login")
+        register_btn = gr.Button("Register")
         login_msg = gr.Textbox(label="Status", interactive=False)
 
-        # State
+        # States
         user_id_state = gr.State()
         username_state = gr.State()
+        password_state = gr.State()
 
-        # --- Main Functional UI (Initially Hidden) ---
         with gr.Row(visible=False) as search_section:
             with gr.Tab("Search"):
                 with gr.Row():
@@ -180,35 +175,20 @@ def create_interface():
                 )
 
                 with gr.Tab("Recent Activity"):
-                    with gr.Row():
-                        queries_btn = gr.Button("🔍 Show Recent Queries")
-                        classifications_btn = gr.Button("📊 Show Recent Classifications")
-                    with gr.Row():
-                        recent_queries_output = gr.Textbox(label="Recent Queries", lines=8, interactive=False)
-                        recent_classifications_output = gr.Textbox(label="Recent Classifications", lines=8,
-                                                                   interactive=False)
+                    queries_btn = gr.Button("🔍 Show Recent Queries")
+                    classifications_btn = gr.Button("📊 Show Recent Classifications")
+                    recent_queries_output = gr.Textbox(label="Recent Queries", lines=8, interactive=False)
+                    recent_classifications_output = gr.Textbox(label="Recent Classifications", lines=8,
+                                                               interactive=False)
 
-                    queries_btn.click(
-                        fn=load_recent_queries,
-                        inputs=[user_id_state, username_state],
-                        outputs=[recent_queries_output]
-                    )
-
-                    classifications_btn.click(
-                        fn=load_recent_classifications,
-                        inputs=[user_id_state, username_state],
-                        outputs=[recent_classifications_output]
-                    )
+                    queries_btn.click(fn=load_recent_queries, inputs=[user_id_state, username_state],
+                                      outputs=[recent_queries_output])
 
         with gr.Row(visible=False) as classify_section:
             with gr.Tab("Classification"):
-                with gr.Row():
-                    with gr.Column():
-                        classify_input = gr.Image(label="Upload Image", type="pil")
-                        classify_btn = gr.Button("Classify")
-                    with gr.Column():
-                        classify_output_text = gr.Textbox(label="Top Class Probabilities", lines=6, interactive=False)
-
+                classify_input = gr.Image(label="Upload Image", type="pil")
+                classify_btn = gr.Button("Classify")
+                classify_output_text = gr.Textbox(label="Top Class Probabilities", lines=6, interactive=False)
 
                 classify_btn.click(
                     fn=classify_image,
@@ -216,31 +196,65 @@ def create_interface():
                     outputs=[classify_output_text]
                 )
 
-        # --- Новый раздел Feedback ---
-        with gr.Row(visible=False) as feedback_section:
-            with gr.Tab("Feedback"):
-                feedback_input = gr.Textbox(label="Оставьте ваш отзыв", lines=5)
-                feedback_btn = gr.Button("Отправить отзыв")
-                feedback_msg = gr.Textbox(label="Статус", interactive=False)
+        with gr.Row(visible=False) as admin_section:
+            with gr.Tab("Admin Upload"):
+                admin_image = gr.Image(label="Upload Image", type="pil")
+                upload_btn = gr.Button("Add to Index")
+                upload_status = gr.Textbox(label="Upload Result", interactive=False)
 
-                feedback_btn.click(
-                    fn=save_feedback,
-                    inputs=[user_id_state, username_state, feedback_input],
-                    outputs=[feedback_msg]
+                def upload_to_backend(image, user_id, username, password):
+                    if image is None:
+                        raise gr.Error("Please upload an image.")
+                    if user_id is None:
+                        raise gr.Error("Please log in.")
+                    _, role = db.authenticate_user(username, password)
+                    if role != "admin":
+                        raise gr.Error("🔐 Admin privileges required.")
+                    backend.add_image_to_index(image)
+                    return "✅ Image added to index and saved."
+
+                upload_btn.click(
+                    fn=upload_to_backend,
+                    inputs=[admin_image, user_id_state, username_state, password_state],
+                    outputs=[upload_status]
                 )
 
-        # Login & Register Button Logic
-        def show_all_sections():
-            return gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)
+        # New Feedback Section
+        with gr.Row(visible=False) as feedback_section:
+            with gr.Tab("Feedback"):
+                feedback_text = gr.Textbox(label="Share Your Feedback", placeholder="Tell us what you think...",
+                                           lines=4)
+                feedback_btn = gr.Button("Submit Feedback")
+                feedback_status = gr.Textbox(label="Feedback Status", interactive=False)
+
+                view_feedback_btn = gr.Button("View My Feedback History")
+                feedback_history = gr.Textbox(label="My Feedback History", lines=8, interactive=False)
+
+                feedback_btn.click(
+                    fn=submit_feedback,
+                    inputs=[user_id_state, username_state,feedback_text],
+                    outputs=[feedback_status, feedback_text]
+                )
+
+                view_feedback_btn.click(
+                    fn=load_recent_feedback,
+                    inputs=[user_id_state, username_state],
+                    outputs=[feedback_history]
+                )
 
         login_btn.click(
             fn=login_user,
             inputs=[login_username, login_password],
-            outputs=[search_section, classify_section, login_msg, user_id_state, username_state]
-        ).then(
-            lambda *args: (gr.update(visible=True), gr.update(visible=True), gr.update(visible=True)),
-            None,
-            [search_section, classify_section, feedback_section]
+            outputs=[
+                search_section,
+                classify_section,
+                admin_section,
+                feedback_section,
+                login_msg,
+                user_id_state,
+                username_state,
+                password_state
+            ]
         )
 
         register_btn.click(
@@ -252,7 +266,6 @@ def create_interface():
     return demo
 
 
-# Run app
 if __name__ == "__main__":
     demo = create_interface()
     demo.launch(show_api=False)

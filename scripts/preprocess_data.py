@@ -118,7 +118,7 @@ def preprocess_dataset():
             transforms.ToTensor()
         ])
         dataset = CocoDetection(root=img_dir, annFile=ann_file, transform=transform)
-        dataset = torch.utils.data.Subset(dataset, range(15000))
+        dataset = torch.utils.data.Subset(dataset, range(5000))
 
         verify_dataset(dataset)
 
