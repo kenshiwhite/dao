@@ -209,22 +209,25 @@ class FeedbackRequest(BaseModel):
     feedback_text: str
 
 @app.post("/feedback")
-async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
+async def submit_feedback(feedback: FeedbackRequest, user=Depends(get_current_user)):
+    user_id = user["id"]
+    username = user["username"]
     try:
-        db.save_feedback(user_id, feedback.feedback_text)
-        return {"message": "Thank you for your feedback!"}
+        db.save_feedback(user_id, username, feedback.feedback_text)
+        return {"message": "✅ Thank you for your feedback!"}
     except Exception as e:
         logging.error(f"Error saving feedback: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error saving feedback.")
+        raise HTTPException(status_code=500, detail="❌ Error saving feedback.")
 
 @app.get("/feedback")
-async def get_feedback(user_id: int = Depends(get_current_user)):
+async def get_feedback(user=Depends(get_current_user)):
+    user_id = user["id"]
     try:
         feedbacks = db.get_feedbacks(user_id)
         return {"feedbacks": feedbacks}
     except Exception as e:
         logging.error(f"Error retrieving feedbacks: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error fetching feedbacks.")
+        raise HTTPException(status_code=500, detail="❌ Error fetching feedbacks.")
 
 @app.get("/recent_classifications")
 async def get_recent_classifications(user_id: int = Depends(get_current_user)):

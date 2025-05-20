@@ -10,7 +10,6 @@ import hashlib
 # Загружаем переменные окружения из .env
 load_dotenv()
 
-
 class Database:
     def __init__(self, max_retries: int = 3, retry_delay: int = 1):
         self.max_retries = max_retries
@@ -43,7 +42,7 @@ class Database:
 
     @contextmanager
     def get_cursor(self):
-        """Используем контекстный менеджер для работы с курсором"""
+        """Контекстный менеджер для работы с курсором"""
         if not self.connection_pool:
             raise ConnectionError("Пул соединений не инициализирован")
 
@@ -67,130 +66,170 @@ class Database:
                 return cursor.fetchall()
 
     def create_tables(self):
-        """Создание таблицы пользователей и запросов."""
-        # Таблица пользователей для авторизации
+        """Создание всех необходимых таблиц"""
+        # Таблица пользователей
         self.execute_query("""
-                           CREATE TABLE IF NOT EXISTS users
-                           (
-                               id SERIAL PRIMARY KEY,
-                               username TEXT NOT NULL UNIQUE,
-                               password TEXT NOT NULL,
-                               role TEXT NOT NULL DEFAULT 'user',  -- Роль может быть 'user' или 'admin'
-                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               last_login TIMESTAMP
-                           )
-                           """)
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP
+            )
+        """)
 
         # Таблица запросов
         self.execute_query("""
-                           CREATE TABLE IF NOT EXISTS queries
-                           (
-                               id         SERIAL PRIMARY KEY,
-                               query_text TEXT NOT NULL,
-                               image_path TEXT NOT NULL,
-                               timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL
-                           )
-                           """)
+            CREATE TABLE IF NOT EXISTS queries (
+                id SERIAL PRIMARY KEY,
+                query_text TEXT NOT NULL,
+                image_path TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        """)
 
+        # Таблица классификаций
         self.execute_query("""
-                           CREATE TABLE IF NOT EXISTS classifications
-                           (
-                               id          SERIAL PRIMARY KEY,
-                               user_id     INTEGER NOT NULL,
-                               image_path  TEXT    NOT NULL,
-                               top_classes TEXT    NOT NULL,
-                               top_probs   TEXT    NOT NULL,
-                               timestamp   INTEGER NOT NULL
-                           );
-                           """)
+            CREATE TABLE IF NOT EXISTS classifications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                image_path TEXT NOT NULL,
+                top_classes TEXT NOT NULL,
+                top_probs TEXT NOT NULL,
+                timestamp INTEGER NOT NULL
+            )
+        """)
 
+        # Таблица избранного
         self.execute_query("""
-                           CREATE TABLE IF NOT EXISTS favorites (
-                               id SERIAL PRIMARY KEY,
-                               user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                               image_path TEXT NOT NULL,
-                               added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               UNIQUE(user_id, image_path) 
-                           );
-                           """)
+            CREATE TABLE IF NOT EXISTS favorites (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                image_path TEXT NOT NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, image_path)
+            )
+        """)
 
-        # Таблица отзывов - исправляем поле user_name на user_id для согласованности
+        # Таблица отзывов
         self.execute_query("""
             CREATE TABLE IF NOT EXISTS feedback (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                user_name TEXT NOT NULL,
                 feedback_text TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+            )
         """)
 
-    def save_feedback(self, user_id: int, feedback_text: str):
-        """Сохранение отзыва пользователя."""
+    # --- Методы работы с отзывами ---
+    def save_feedback(self, user_id: int, user_name: str, feedback_text: str):
+        query = """
+                INSERT INTO feedback (user_id, user_name, feedback_text)
+                VALUES (%s, %s, %s) \
+                """
+        self.execute_query(query, (user_id, user_name, feedback_text))
+    def get_feedbacks(self, user_name: str):
+        query = """
+            SELECT feedback_text, created_at FROM feedback
+            WHERE user_name = %s
+            ORDER BY created_at DESC
+        """
+        return self.execute_query(query, (user_name,), fetch=True)
+
+    # --- Методы работы с избранным ---
+    def add_to_favorites(self, user_id: int, image_path: str):
         self.execute_query(
-            "INSERT INTO feedback (user_id, feedback_text) VALUES (%s, %s)",
-            (user_id, feedback_text)
+            "INSERT INTO favorites (user_id, image_path) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (user_id, image_path)
         )
 
-    def get_feedbacks(self, user_id: int) -> List[Tuple[str, str]]:
-        """Получение списка отзывов пользователя."""
+    def remove_from_favorites(self, user_id: int, image_path: str):
+        self.execute_query(
+            "DELETE FROM favorites WHERE user_id = %s AND image_path = %s",
+            (user_id, image_path)
+        )
+
+    def get_favorites(self, user_id: int) -> List[str]:
         results = self.execute_query(
-            "SELECT feedback_text, created_at FROM feedback WHERE user_id = %s ORDER BY created_at DESC",
+            "SELECT image_path FROM favorites WHERE user_id = %s ORDER BY added_at DESC",
             (user_id,),
             fetch=True
         )
-        return results if results else []
+        return [row[0] for row in results] if results else []
 
+    # --- Методы работы с запросами ---
     def save_query(self, query_text: str, image_path: str, user_id: int):
-        """Сохранение одного запроса в базу данных."""
         self.execute_query(
             "INSERT INTO queries (query_text, image_path, user_id) VALUES (%s, %s, %s)",
             (query_text, image_path, user_id)
         )
 
+    # --- Методы работы с классификациями ---
+    def save_classification(self, user_id, image_path, top_classes, top_probs, timestamp):
+        query = """
+            INSERT INTO classifications (user_id, image_path, top_classes, top_probs, timestamp)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        self.execute_query(query, (user_id, image_path, ','.join(top_classes), ','.join(map(str, top_probs)), timestamp))
+
+    def get_recent_classifications(self, user_id):
+        query = """
+            SELECT image_path, top_classes, top_probs, timestamp
+            FROM classifications
+            WHERE user_id = %s
+            ORDER BY timestamp DESC
+            LIMIT 10
+        """
+        rows = self.execute_query(query, (user_id,), fetch=True)
+        results = []
+        for row in rows:
+            results.append({
+                "image_path": row[0],
+                "top_classes": row[1].split(','),
+                "top_probs": list(map(float, row[2].split(','))),
+                "timestamp": row[3]
+            })
+        return results
 
     def get_top_queries(self, limit: int = 3) -> List[Tuple[str, int]]:
-        """
-        Возвращает top N самых частых текстов запросов из таблицы queries.
-        Возвращает список кортежей (query_text, count).
-        """
         query = """
-                SELECT query_text, COUNT(*) AS count
-                FROM queries
-                GROUP BY query_text
-                ORDER BY count DESC
-                LIMIT %s \
-                """
+            SELECT query_text, COUNT(*) AS count
+            FROM queries
+            GROUP BY query_text
+            ORDER BY count DESC
+            LIMIT %s
+        """
         results = self.execute_query(query, (limit,), fetch=True)
         return results if results else []
 
-    def get_recent_queries(self, user_id: Optional[int] = None, limit: int = 10) -> List[Tuple]:
-        """Получение последних запросов пользователя или всех пользователей."""
+    def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
         if user_id:
             query = """
-                    SELECT q.query_text, q.image_path, u.username, q.timestamp
-                    FROM queries q
-                             LEFT JOIN users u ON q.user_id = u.id
-                    WHERE q.user_id = %s
-                    ORDER BY q.timestamp DESC
-                    LIMIT %s \
-                    """
+                SELECT q.query_text, q.image_path, u.username, q.timestamp
+                FROM queries q
+                LEFT JOIN users u ON q.user_id = u.id
+                WHERE q.user_id = %s
+                ORDER BY q.timestamp DESC
+                LIMIT %s
+            """
             params = (user_id, limit)
         else:
             query = """
-                    SELECT q.query_text, q.image_path, u.username, q.timestamp
-                    FROM queries q
-                             LEFT JOIN users u ON q.user_id = u.id
-                    ORDER BY q.timestamp DESC
-                    LIMIT %s \
-                    """
+                SELECT q.query_text, q.image_path, u.username, q.timestamp
+                FROM queries q
+                LEFT JOIN users u ON q.user_id = u.id
+                ORDER BY q.timestamp DESC
+                LIMIT %s
+            """
             params = (limit,)
 
         results = self.execute_query(query, params, fetch=True)
         return results if results else []
 
+    # --- Методы для пользователей ---
     def register_user(self, username: str, password: str, role: str = 'user'):
-        """Регистрация нового пользователя."""
         hashed_password = self.hash_password(password)
         self.execute_query(
             "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
@@ -198,11 +237,9 @@ class Database:
         )
 
     def hash_password(self, password: str):
-        """Хеширование пароля (используем hashlib для примера)."""
         return hashlib.sha256(password.encode()).hexdigest()
 
-    def authenticate_user(self, username: str, password: str) -> Tuple[Optional[int], Optional[str]]:
-        """Аутентификация пользователя."""
+    def authenticate_user(self, username: str, password: str):
         user = self.execute_query(
             "SELECT id, password, role FROM users WHERE username = %s",
             (username,),
@@ -212,34 +249,22 @@ class Database:
             user_id, stored_password, role = user[0]
             if stored_password == self.hash_password(password):
                 return user_id, role
-        return None, None  # Если аутентификация не удалась
+        return None, None
 
-    def check_user_role(self, user_id: int) -> str:
-        """Проверка роли пользователя для определения прав доступа."""
+    def check_user_role(self, user_id: int):
         role = self.execute_query(
             "SELECT role FROM users WHERE id = %s", (user_id,), fetch=True
         )
         return role[0][0] if role else 'guest'
 
     def access_control(self, user_id: int, required_role: str):
-        """Проверка прав доступа пользователя к ресурсу."""
         user_role = self.check_user_role(user_id)
         if user_role != required_role:
             raise PermissionError("У вас нет прав для выполнения этой операции.")
 
     def close_all(self):
-        """Закрытие всех соединений из пула, если пул существует и не был закрыт ранее."""
         if self.connection_pool:
-            try:
-                # Проверка, был ли уже закрыт пул
-                if not self.connection_pool.closed:
-                    self.connection_pool.closeall()
-                    print("✅ Все соединения закрыты.")
-                else:
-                    print("⚠️ Пул соединений уже закрыт.")
-            except psycopg2.pool.PoolError as e:
-                print(f"❌ Ошибка при закрытии пула соединений: {e}")
-
-    def __del__(self):
-        """Обеспечиваем корректное закрытие при удалении объекта."""
-        self.close_all()
+            self.connection_pool.closeall()
+            print("Все соединения с базой данных закрыты.")
+        else:
+            print("Пул соединений не инициализирован.")
