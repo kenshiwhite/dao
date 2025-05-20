@@ -27,6 +27,16 @@ def load_recent_feedback(user_id, username):
         [f"{feedback[1]} | {feedback[0]}" for feedback in feedbacks]) if feedbacks else "No feedback submitted yet."
 
 
+def load_top_queries():
+    # Get the top 3 most searched queries from database
+    top_queries = db.get_top_queries(limit=3)
+    if not top_queries:
+        return "No search queries found."
+
+    formatted_queries = "\n".join([f"'{query}' - {count} searches" for query, count in top_queries])
+    return formatted_queries
+
+
 def create_classification_plot(probs, class_names):
     fig, ax = plt.subplots(figsize=(10, 5))
     y_pos = np.arange(len(probs))
@@ -60,6 +70,7 @@ def login_user(username, password):
             gr.update(visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
+            gr.update(visible=False),  # top_queries_section
             "❌ Invalid credentials.",
             None,
             None,
@@ -72,6 +83,7 @@ def login_user(username, password):
         gr.update(visible=True),  # classify_section
         gr.update(visible=is_admin),  # admin_section
         gr.update(visible=True),  # feedback_section
+        gr.update(visible=True),  # top_queries_section
         f"✅ Welcome, {username}!",
         user_id,
         username,
@@ -121,10 +133,11 @@ def submit_feedback(feedback_text, user_id, username):
         raise gr.Error("Please enter some feedback.")
 
     try:
-        db.save_feedback(user_id, username, feedback_text)
+        db.save_feedback(user_id=user_id, feedback_text=feedback_text, user_name=username)
         return "✅ Thank you for your feedback!", ""
     except Exception as e:
         return f"❌ Error saving feedback: {str(e)}", feedback_text
+
 
 def suggest_queries():
     recent = db.get_recent_queries(limit=5)
@@ -150,6 +163,21 @@ def create_interface():
         user_id_state = gr.State()
         username_state = gr.State()
         password_state = gr.State()
+
+        # Top queries section - Visible once logged in
+        with gr.Row(visible=False) as top_queries_section:
+            # Replace gr.Box() with gr.Column()
+            with gr.Column():
+                gr.Markdown("## 🔍 Top Searched Queries")
+                top_queries_output = gr.Textbox(label="Most Popular Searches", lines=4, interactive=False)
+                refresh_top_queries_btn = gr.Button("Refresh Top Queries")
+
+                # Load top queries when button is clicked
+                refresh_top_queries_btn.click(
+                    fn=load_top_queries,
+                    inputs=[],
+                    outputs=[top_queries_output]
+                )
 
         with gr.Row(visible=False) as search_section:
             with gr.Tab("Search"):
@@ -219,7 +247,7 @@ def create_interface():
                     outputs=[upload_status]
                 )
 
-        # New Feedback Section
+        # Feedback Section
         with gr.Row(visible=False) as feedback_section:
             with gr.Tab("Feedback"):
                 feedback_text = gr.Textbox(label="Share Your Feedback", placeholder="Tell us what you think...",
@@ -232,7 +260,7 @@ def create_interface():
 
                 feedback_btn.click(
                     fn=submit_feedback,
-                    inputs=[user_id_state, username_state,feedback_text],
+                    inputs=[feedback_text, user_id_state, username_state],
                     outputs=[feedback_status, feedback_text]
                 )
 
@@ -250,6 +278,7 @@ def create_interface():
                 classify_section,
                 admin_section,
                 feedback_section,
+                top_queries_section,
                 login_msg,
                 user_id_state,
                 username_state,
@@ -261,6 +290,13 @@ def create_interface():
             fn=register_user,
             inputs=[login_username, login_password],
             outputs=[login_msg]
+        )
+
+        # Load top queries automatically when the demo is loaded and user is logged in
+        demo.load(
+            fn=load_top_queries,
+            inputs=None,
+            outputs=[top_queries_output]
         )
 
     return demo

@@ -123,20 +123,60 @@ class Database:
             )
         """)
 
-    # --- Методы работы с отзывами ---
-    def save_feedback(self, user_id: int, user_name: str, feedback_text: str):
+    def save_feedback(self, user_id: int, feedback_text: str, user_name: str = None):
+        """Save user feedback to the database
+
+        Args:
+            user_id: The ID of the user submitting feedback
+            feedback_text: The feedback text content
+            user_name: Optional username (if not provided, will be fetched from user_id)
+        """
+        if user_name is None:
+            # Get username from user_id if not provided
+            user_name_result = self.execute_query(
+                "SELECT username FROM users WHERE id = %s",
+                (user_id,),
+                fetch=True
+            )
+            if user_name_result:
+                user_name = user_name_result[0][0]
+            else:
+                user_name = "Unknown"  # Fallback if user not found
+
         query = """
                 INSERT INTO feedback (user_id, user_name, feedback_text)
-                VALUES (%s, %s, %s) \
+                VALUES (%s, %s, %s)
                 """
         self.execute_query(query, (user_id, user_name, feedback_text))
-    def get_feedbacks(self, user_name: str):
-        query = """
-            SELECT feedback_text, created_at FROM feedback
-            WHERE user_name = %s
-            ORDER BY created_at DESC
+
+    def get_feedbacks(self, user_id: int = None, user_name: str = None):
+        """Get feedback history for a user by ID or name
+
+        Args:
+            user_id: User ID to filter by (optional)
+            user_name: Username to filter by (optional)
         """
-        return self.execute_query(query, (user_name,), fetch=True)
+        if user_id:
+            query = """
+                SELECT feedback_text, created_at FROM feedback
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+            """
+            return self.execute_query(query, (user_id,), fetch=True)
+        elif user_name:
+            query = """
+                SELECT feedback_text, created_at FROM feedback
+                WHERE user_name = %s
+                ORDER BY created_at DESC
+            """
+            return self.execute_query(query, (user_name,), fetch=True)
+        else:
+            # Return all feedback if no filter provided
+            query = """
+                SELECT user_name, feedback_text, created_at FROM feedback
+                ORDER BY created_at DESC
+            """
+            return self.execute_query(query, fetch=True)
 
     # --- Методы работы с избранным ---
     def add_to_favorites(self, user_id: int, image_path: str):

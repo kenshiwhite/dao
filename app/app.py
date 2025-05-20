@@ -192,7 +192,7 @@ class FeedbackRequest(BaseModel):
 @app.post("/feedback")
 async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
     try:
-        db.save_feedback(user_id, feedback.feedback_text)
+        db.save_feedback(user_id=user_id, feedback_text=feedback.feedback_text)
         return {"message": "Thank you for your feedback!"}
     except Exception as e:
         logging.error(f"Error saving feedback: {str(e)}")
