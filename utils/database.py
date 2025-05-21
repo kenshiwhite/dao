@@ -149,6 +149,55 @@ class Database:
                 """
         self.execute_query(query, (user_id, user_name, feedback_text))
 
+    def delete_feedback(self, feedback_id: int, user_id: int = None, is_admin: bool = False):
+        """Delete feedback from the database
+
+        Args:
+            feedback_id: ID of the feedback to delete
+            user_id: ID of the user attempting to delete (for permission check)
+            is_admin: Whether the user has admin privileges
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        # If admin, delete any feedback
+        if is_admin:
+            self.execute_query(
+                "DELETE FROM feedback WHERE id = %s",
+                (feedback_id,)
+            )
+            return True
+
+        # If regular user, only delete their own feedback
+        if user_id:
+            result = self.execute_query(
+                "DELETE FROM feedback WHERE id = %s AND user_id = %s",
+                (feedback_id, user_id),
+                fetch=True
+            )
+            # Check if any rows were affected (deleted)
+            return result is not None and len(result) > 0
+
+        return False
+
+    def authenticate_user_by_id(self, user_id: int):
+        """Get user role from user_id
+
+        Args:
+            user_id: The ID of the user
+
+        Returns:
+            Tuple of (user_id, role) or (None, None) if not found
+        """
+        result = self.execute_query(
+            "SELECT id, role FROM users WHERE id = %s",
+            (user_id,),
+            fetch=True
+        )
+        if result and len(result) > 0:
+            return result[0]
+        return None, None
+
     def get_feedbacks(self, user_id: int = None, user_name: str = None):
         """Get feedback history for a user by ID or name
 
@@ -158,14 +207,14 @@ class Database:
         """
         if user_id:
             query = """
-                SELECT feedback_text, created_at FROM feedback
+                SELECT id, feedback_text, created_at FROM feedback
                 WHERE user_id = %s
                 ORDER BY created_at DESC
             """
             return self.execute_query(query, (user_id,), fetch=True)
         elif user_name:
             query = """
-                SELECT feedback_text, created_at FROM feedback
+                SELECT id, feedback_text, created_at FROM feedback
                 WHERE user_name = %s
                 ORDER BY created_at DESC
             """
@@ -173,7 +222,7 @@ class Database:
         else:
             # Return all feedback if no filter provided
             query = """
-                SELECT user_name, feedback_text, created_at FROM feedback
+                SELECT id, user_id, user_name, feedback_text, created_at FROM feedback
                 ORDER BY created_at DESC
             """
             return self.execute_query(query, fetch=True)

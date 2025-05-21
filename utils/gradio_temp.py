@@ -19,13 +19,73 @@ def load_recent_queries(user_id, username):
     return "\n".join([f"{row[2]} | {row[0]} | {row[1]}" for row in rows]) if rows else "No recent queries."
 
 
+def delete_user_feedback(feedback_id, user_id, username, password):
+    if user_id is None:
+        raise gr.Error("🔒 Please log in to delete feedback.")
+
+    if not feedback_id:
+        return "❌ Please enter a valid feedback ID", None
+
+    try:
+        # Re-authenticate to confirm user credentials
+        user_id, role = db.authenticate_user(username, password)
+        is_admin = role == "admin"
+
+        success = db.delete_feedback(feedback_id, user_id, is_admin)
+
+        if success:
+            return "✅ Feedback deleted successfully!", load_recent_feedback(user_id, username)
+        else:
+            if is_admin:
+                return "❌ Feedback not found!", None
+            else:
+                return "❌ You can only delete your own feedback!", None
+
+    except Exception as e:
+        return f"❌ Error deleting feedback: {str(e)}", None
+
+
 def load_recent_feedback(user_id, username):
     if user_id is None:
         raise gr.Error("🔒 Please log in to view feedback.")
-    feedbacks = db.get_feedbacks(user_id=user_id)
-    return "\n".join(
-        [f"{feedback[1]} | {feedback[0]}" for feedback in feedbacks]) if feedbacks else "No feedback submitted yet."
 
+    # Get user role to determine what feedback to show
+    _, role = db.authenticate_user_by_id(user_id)
+    is_admin = role == "admin"
+
+    # Get all feedback if admin, or just user's feedback otherwise
+    if is_admin:
+        feedbacks = db.get_feedbacks()  # Get all feedback
+    else:
+        feedbacks = db.get_feedbacks(user_id=user_id)  # Get only user's feedback
+
+    if not feedbacks:
+        return "No feedback submitted yet."
+
+    # Format feedback with IDs for display
+    formatted_feedback = []
+
+    if is_admin:
+        # For admin, show user_id and username
+        for feedback in feedbacks:
+            feedback_id = feedback[0]
+            user_id = feedback[1]
+            username = feedback[2]
+            feedback_text = feedback[3]
+            created_at = feedback[4]
+
+            formatted_feedback.append(
+                f"ID: {feedback_id} | User: {username} (ID: {user_id}) | {created_at} | {feedback_text}")
+    else:
+        # For regular users
+        for feedback in feedbacks:
+            feedback_id = feedback[0]
+            feedback_text = feedback[1]
+            created_at = feedback[2]
+
+            formatted_feedback.append(f"ID: {feedback_id} | {created_at} | {feedback_text}")
+
+    return "\n".join(formatted_feedback)
 
 def load_top_queries():
     # Get the top 3 most searched queries from database
@@ -250,14 +310,51 @@ def create_interface():
         # Feedback Section
         with gr.Row(visible=False) as feedback_section:
             with gr.Tab("Feedback"):
-                feedback_text = gr.Textbox(label="Share Your Feedback", placeholder="Tell us what you think...",
-                                           lines=4)
-                feedback_btn = gr.Button("Submit Feedback")
-                feedback_status = gr.Textbox(label="Feedback Status", interactive=False)
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        feedback_text = gr.Textbox(
+                            label="Share Your Feedback",
+                            placeholder="Tell us what you think...",
+                            lines=4
+                        )
+                        feedback_btn = gr.Button("Submit Feedback", variant="primary")
 
-                view_feedback_btn = gr.Button("View My Feedback History")
-                feedback_history = gr.Textbox(label="My Feedback History", lines=8, interactive=False)
+                    with gr.Column(scale=1):
+                        # Add a note about feedback deletion
+                        gr.Markdown("""
+                           ### Feedback Management
+                           - Regular users can delete their own feedback
+                           - Admins can delete any feedback
+                           """)
 
+                with gr.Row():
+                    feedback_status = gr.Markdown()
+
+                gr.Markdown("### View and Manage Feedback")
+                with gr.Row():
+                    view_feedback_btn = gr.Button("🔄 View Feedback History")
+                    # Clear column for spacing
+                    with gr.Column():
+                        pass
+
+                with gr.Row():
+                    feedback_history = gr.TextArea(
+                        label="Feedback History",
+                        lines=8,
+                        interactive=False
+                    )
+
+                with gr.Row():
+                    with gr.Column():
+                        feedback_id_input = gr.Number(
+                            label="Feedback ID to Delete",
+                            precision=0,
+                            minimum=1
+                        )
+                    with gr.Column():
+                        delete_feedback_btn = gr.Button("🗑️ Delete Feedback", variant="stop")
+
+                # Connect the buttons
                 feedback_btn.click(
                     fn=submit_feedback,
                     inputs=[feedback_text, user_id_state, username_state],
@@ -268,6 +365,19 @@ def create_interface():
                     fn=load_recent_feedback,
                     inputs=[user_id_state, username_state],
                     outputs=[feedback_history]
+                )
+
+                delete_feedback_btn.click(
+                    fn=delete_user_feedback,
+                    inputs=[feedback_id_input, user_id_state, username_state, password_state],
+                    outputs=[feedback_status, feedback_history]
+                )
+
+                # Clear the feedback ID field after deletion
+                delete_feedback_btn.click(
+                    fn=lambda: gr.Number.update(value=None),
+                    inputs=[],
+                    outputs=[feedback_id_input]
                 )
 
         login_btn.click(

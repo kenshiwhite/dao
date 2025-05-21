@@ -14,7 +14,7 @@ from PIL import Image
 import base64
 import matplotlib.pyplot as plt
 from torchvision.transforms import transforms
-
+from pydantic import BaseModel
 from models.clip_model import CLIPModel
 from utils.database import Database
 
@@ -133,6 +133,9 @@ clip_backend = CLIPBackend()
 security = HTTPBasic()
 db = Database()
 
+class DeleteFeedbackRequest(BaseModel):
+    feedback_id: int
+
 def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> int:
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
     if user_id is None:
@@ -197,6 +200,33 @@ async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_
     except Exception as e:
         logging.error(f"Error saving feedback: {str(e)}")
         raise HTTPException(status_code=500, detail="Error saving feedback.")
+
+
+@app.delete("/feedback/{feedback_id}")
+async def delete_feedback(
+        feedback_id: int,
+        user_id: int = Depends(get_current_user)
+):
+    try:
+        # Check if user is admin
+        _, role = db.authenticate_user_by_id(user_id)
+        is_admin = role == "admin"
+
+        # Try to delete the feedback
+        success = db.delete_feedback(feedback_id, user_id, is_admin)
+
+        if success:
+            return {"message": "Feedback deleted successfully"}
+        else:
+            if is_admin:
+                raise HTTPException(status_code=404, detail="Feedback not found")
+            else:
+                raise HTTPException(status_code=403, detail="You can only delete your own feedback")
+
+    except Exception as e:
+        logging.error(f"Error deleting feedback: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error deleting feedback")
+
 
 @app.get("/feedback")
 async def get_feedback(user_id: int = Depends(get_current_user)):
