@@ -21,6 +21,7 @@ from utils.database import Database
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
+
 class CLIPBackend:
     def __init__(self):
         self.clip_model = CLIPModel()
@@ -87,7 +88,8 @@ class CLIPBackend:
             images = list(images)
         return features, images
 
-    def classify_image(self, image: Image.Image, class_names: Optional[List[str]] = None) -> Tuple[List[float], List[str]]:
+    def classify_image(self, image: Image.Image, class_names: Optional[List[str]] = None) -> Tuple[
+        List[float], List[str]]:
         if image is None:
             raise ValueError("Please provide an image for classification.")
 
@@ -99,7 +101,8 @@ class CLIPBackend:
 
         return top_probs.tolist(), top_classes
 
-    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None, top_k: int = 10) -> List[Tuple[torch.Tensor, float]]:
+    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None,
+                            top_k: int = 10) -> List[Tuple[torch.Tensor, float]]:
         if query is None and query_image is None:
             raise ValueError("Please provide either a text query or an image.")
 
@@ -133,8 +136,33 @@ clip_backend = CLIPBackend()
 security = HTTPBasic()
 db = Database()
 
+
+# Pydantic models for authentication
+class UserRegistration(BaseModel):
+    username: str
+    password: str
+    role: str = "user"  # Default role is user
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    message: str
+    user_id: int
+    username: str
+    role: str
+
+
 class DeleteFeedbackRequest(BaseModel):
     feedback_id: int
+
+
+class FeedbackRequest(BaseModel):
+    feedback_text: str
+
 
 def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> int:
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
@@ -146,6 +174,7 @@ def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> i
         logging.error(f"Invalid user_id: expected int, got '{user_id}'")
         raise HTTPException(status_code=500, detail="Internal server error: invalid user ID")
 
+
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
     user_id, role = db.authenticate_user(credentials.username, credentials.password)
     if user_id is None:
@@ -154,6 +183,117 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
         raise HTTPException(status_code=403, detail="Admin privileges required.")
     return int(user_id)
 
+
+# Authentication endpoints
+@app.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+async def register_user(user_data: UserRegistration):
+    """Register a new user"""
+    try:
+        # Check if username already exists
+        existing_user, _ = db.authenticate_user(user_data.username, "dummy_password")
+        if existing_user is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Username already exists"
+            )
+
+        # Register the new user
+        db.register_user(user_data.username, user_data.password, user_data.role)
+
+        # Get the newly created user's ID
+        user_id, role = db.authenticate_user(user_data.username, user_data.password)
+
+        if user_id is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create user"
+            )
+
+        return AuthResponse(
+            message="User registered successfully",
+            user_id=user_id,
+            username=user_data.username,
+            role=role
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Registration error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error during registration"
+        )
+
+
+@app.post("/login", response_model=AuthResponse)
+async def login_user(login_data: UserLogin):
+    """Authenticate a user and return their information"""
+    try:
+        user_id, role = db.authenticate_user(login_data.username, login_data.password)
+
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid username or password"
+            )
+
+        return AuthResponse(
+            message="Login successful",
+            user_id=user_id,
+            username=login_data.username,
+            role=role
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Login error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error during login"
+        )
+
+
+@app.get("/user/profile")
+async def get_user_profile(user_id: int = Depends(get_current_user)):
+    """Get current user's profile information"""
+    try:
+        user_info, role = db.authenticate_user_by_id(user_id)
+        if user_info is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Get username from database
+        user_data = db.execute_query(
+            "SELECT username, created_at, last_login FROM users WHERE id = %s",
+            (user_id,),
+            fetch=True
+        )
+
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        username, created_at, last_login = user_data[0]
+
+        return {
+            "user_id": user_id,
+            "username": username,
+            "role": role,
+            "created_at": created_at,
+            "last_login": last_login
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Profile error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error fetching user profile"
+        )
+
+
+# Admin endpoints
 @app.post("/admin/upload_image", status_code=status.HTTP_201_CREATED)
 async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depends(verify_admin)):
     try:
@@ -164,6 +304,8 @@ async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depend
         logging.error(f"Admin upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to upload and index image.")
 
+
+# User query and classification endpoints
 @app.get("/recent_queries")
 async def get_recent_queries(user_id: int = Depends(get_current_user)):
     try:
@@ -172,6 +314,7 @@ async def get_recent_queries(user_id: int = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"Error fetching recent queries: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching recent queries.")
+
 
 @app.post("/classify_image")
 async def classify_image(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
@@ -189,9 +332,8 @@ async def classify_image(file: UploadFile = File(...), user_id: int = Depends(ge
         logging.error(f"Error classifying image: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
 
-class FeedbackRequest(BaseModel):
-    feedback_text: str
 
+# Feedback endpoints
 @app.post("/feedback")
 async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
     try:
@@ -237,6 +379,7 @@ async def get_feedback(user_id: int = Depends(get_current_user)):
         logging.error(f"Error retrieving feedbacks: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching feedbacks.")
 
+
 @app.get("/recent_classifications")
 async def get_recent_classifications(user_id: int = Depends(get_current_user)):
     try:
@@ -245,6 +388,7 @@ async def get_recent_classifications(user_id: int = Depends(get_current_user)):
     except Exception as e:
         logging.error(f"Error fetching recent classifications: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching classifications.")
+
 
 @app.get("/top-queries")
 def get_most_searched_queries(limit: int = 3):
@@ -256,12 +400,13 @@ def get_most_searched_queries(limit: int = 3):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
 @app.post("/search_images")
 async def search_images(
-    query: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    top_k: int = Form(10),
-    user_id: int = Depends(get_current_user)
+        query: Optional[str] = Form(None),
+        file: Optional[UploadFile] = File(None),
+        top_k: int = Form(10),
+        user_id: int = Depends(get_current_user)
 ):
     try:
         if query:
