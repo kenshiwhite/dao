@@ -1,7 +1,7 @@
 from fastapi import status, FastAPI, UploadFile, File, Form, HTTPException, Depends
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPBearer, HTTPBasicCredentials, HTTPBasic
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Tuple
 import logging
@@ -18,9 +18,17 @@ from torchvision.transforms import transforms
 from pydantic import BaseModel
 from models.clip_model import CLIPModel
 from utils.database import Database
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
+
+# JWT Configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 
 
 class CLIPBackend:
@@ -134,25 +142,53 @@ class CLIPBackend:
 # Initialize app and dependencies
 app = FastAPI()
 
-# Add CORS middleware - Allow all origins
+# Enhanced CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*", "Authorization", "Content-Type", "Accept"],
+    expose_headers=["*"]
 )
 
 clip_backend = CLIPBackend()
-security = HTTPBasic()
+security = HTTPBearer()
+basic_security = HTTPBasic()  # Keep for backward compatibility if needed
 db = Database()
 
 
-# Pydantic models for authentication
+# JWT token functions
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = payload.get("user_id")
+        username: str = payload.get("username")
+        role: str = payload.get("role")
+        if user_id is None:
+            return None, None, None
+        return user_id, username, role
+    except JWTError as e:
+        logging.error(f"JWT Error: {str(e)}")
+        return None, None, None
+
+
+# Pydantic models
 class UserRegistration(BaseModel):
     username: str
     password: str
-    role: str = "user"  # Default role is user
+    role: str = "user"
 
 
 class UserLogin(BaseModel):
@@ -167,6 +203,15 @@ class AuthResponse(BaseModel):
     role: str
 
 
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    user_id: int
+    username: str
+    role: str
+
+
 class DeleteFeedbackRequest(BaseModel):
     feedback_id: int
 
@@ -175,24 +220,39 @@ class FeedbackRequest(BaseModel):
     feedback_text: str
 
 
-def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> int:
-    user_id, role = db.authenticate_user(credentials.username, credentials.password)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+# Authentication dependencies
+def get_current_user(token: str = Depends(security)) -> dict:
+    """Get current user from JWT token"""
     try:
-        return int(user_id)
-    except ValueError:
-        logging.error(f"Invalid user_id: expected int, got '{user_id}'")
-        raise HTTPException(status_code=500, detail="Internal server error: invalid user ID")
+        user_id, username, role = verify_token(token.credentials)
+        if user_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return {
+            "user_id": user_id,
+            "username": username,
+            "role": role
+        }
+    except Exception as e:
+        logging.error(f"Authentication error: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
-def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
-    user_id, role = db.authenticate_user(credentials.username, credentials.password)
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Admin privileges required.")
-    return int(user_id)
+def verify_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    """Verify user has admin privileges"""
+    if current_user["role"] != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin privileges required"
+        )
+    return current_user
 
 
 # Authentication endpoints
@@ -237,9 +297,9 @@ async def register_user(user_data: UserRegistration):
         )
 
 
-@app.post("/api/login", response_model=AuthResponse)
+@app.post("/api/login", response_model=TokenResponse)
 async def login_user(login_data: UserLogin):
-    """Authenticate a user and return their information"""
+    """Authenticate a user and return JWT token"""
     try:
         user_id, role = db.authenticate_user(login_data.username, login_data.password)
 
@@ -249,8 +309,21 @@ async def login_user(login_data: UserLogin):
                 detail="Invalid username or password"
             )
 
-        return AuthResponse(
-            message="Login successful",
+        # Create JWT token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={
+                "user_id": user_id,
+                "username": login_data.username,
+                "role": role
+            },
+            expires_delta=access_token_expires
+        )
+
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             user_id=user_id,
             username=login_data.username,
             role=role
@@ -267,14 +340,12 @@ async def login_user(login_data: UserLogin):
 
 
 @app.get("/api/user/profile")
-async def get_user_profile(user_id: int = Depends(get_current_user)):
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
     """Get current user's profile information"""
     try:
-        user_info, role = db.authenticate_user_by_id(user_id)
-        if user_info is None:
-            raise HTTPException(status_code=404, detail="User not found")
+        user_id = current_user["user_id"]
 
-        # Get username from database
+        # Get additional user data from database
         user_data = db.execute_query(
             "SELECT username, created_at, last_login FROM users WHERE id = %s",
             (user_id,),
@@ -289,7 +360,7 @@ async def get_user_profile(user_id: int = Depends(get_current_user)):
         return {
             "user_id": user_id,
             "username": username,
-            "role": role,
+            "role": current_user["role"],
             "created_at": created_at,
             "last_login": last_login
         }
@@ -306,7 +377,7 @@ async def get_user_profile(user_id: int = Depends(get_current_user)):
 
 # Admin endpoints
 @app.post("/api/admin/upload_image", status_code=status.HTTP_201_CREATED)
-async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depends(verify_admin)):
+async def admin_upload_image(file: UploadFile = File(...), current_user: dict = Depends(verify_admin)):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         clip_backend.add_image_to_index(image)
@@ -318,8 +389,9 @@ async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depend
 
 # User query and classification endpoints
 @app.get("/api/recent_queries")
-async def get_recent_queries(user_id: int = Depends(get_current_user)):
+async def get_recent_queries(current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user["user_id"]
         recent_queries = db.get_recent_queries(user_id)
         return {"recent_queries": recent_queries}
     except Exception as e:
@@ -328,8 +400,9 @@ async def get_recent_queries(user_id: int = Depends(get_current_user)):
 
 
 @app.post("/api/classify_image")
-async def classify_image(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
+async def classify_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user["user_id"]
         image = Image.open(BytesIO(await file.read())).convert('RGB')
         top_probs, top_classes = clip_backend.classify_image(image)
         image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
@@ -346,8 +419,9 @@ async def classify_image(file: UploadFile = File(...), user_id: int = Depends(ge
 
 # Feedback endpoints
 @app.post("/api/feedback")
-async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
+async def submit_feedback(feedback: FeedbackRequest, current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user["user_id"]
         db.save_feedback(user_id=user_id, feedback_text=feedback.feedback_text)
         return {"message": "Thank you for your feedback!"}
     except Exception as e:
@@ -358,12 +432,11 @@ async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_
 @app.delete("/api/feedback/{feedback_id}")
 async def delete_feedback(
         feedback_id: int,
-        user_id: int = Depends(get_current_user)
+        current_user: dict = Depends(get_current_user)
 ):
     try:
-        # Check if user is admin
-        _, role = db.authenticate_user_by_id(user_id)
-        is_admin = role == "admin"
+        user_id = current_user["user_id"]
+        is_admin = current_user["role"] == "admin"
 
         # Try to delete the feedback
         success = db.delete_feedback(feedback_id, user_id, is_admin)
@@ -382,8 +455,9 @@ async def delete_feedback(
 
 
 @app.get("/api/feedback")
-async def get_feedback(user_id: int = Depends(get_current_user)):
+async def get_feedback(current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user["user_id"]
         feedbacks = db.get_feedbacks(user_id)
         return {"feedbacks": feedbacks}
     except Exception as e:
@@ -392,8 +466,9 @@ async def get_feedback(user_id: int = Depends(get_current_user)):
 
 
 @app.get("/api/recent_classifications")
-async def get_recent_classifications(user_id: int = Depends(get_current_user)):
+async def get_recent_classifications(current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user["user_id"]
         classifications = db.get_recent_classifications(user_id)
         return {"recent_classifications": classifications}
     except Exception as e:
@@ -417,9 +492,11 @@ async def search_images(
         query: Optional[str] = Form(None),
         file: Optional[UploadFile] = File(None),
         top_k: int = Form(10),
-        user_id: int = Depends(get_current_user)
+        current_user: dict = Depends(get_current_user)
 ):
     try:
+        user_id = current_user["user_id"]
+
         if query:
             results = await clip_backend.search_images(query=query, top_k=top_k)
             query_text = query
@@ -452,3 +529,15 @@ async def search_images(
     except Exception as e:
         logging.error(f"Error searching images: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during search.")
+
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.utcnow()}
+
+
+# Root endpoint
+@app.get("/")
+async def root():
+    return {"message": "CLIP Image Search API", "version": "1.0.0"}
