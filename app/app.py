@@ -537,15 +537,14 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
     """Get analytics for today's search queries (no personal data exposed)"""
     try:
         # Analytics available to all authenticated users
-
         today = date.today()
 
-        # Get today's queries from database
+        # Get today's queries from database - Fixed the column name issue
         today_queries = db.execute_query(
             """
-            SELECT query_text, created_at 
+            SELECT query_text, timestamp 
             FROM queries 
-            WHERE DATE(created_at) = %s 
+            WHERE DATE(timestamp) = %s 
             AND query_text IS NOT NULL 
             AND query_text != ''
             """,
@@ -567,9 +566,29 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
                 }
             }
 
-        # Process the queries
-        queries_text = [query[0].strip().lower() for query in today_queries if query[0]]
-        queries_time = [query[1] for query in today_queries]
+        # Process the queries - Added null checks
+        queries_text = []
+        queries_time = []
+
+        for query in today_queries:
+            if query[0] and query[0].strip():  # Check if query_text is not None and not empty
+                queries_text.append(query[0].strip().lower())
+                queries_time.append(query[1])
+
+        # If no valid queries after filtering
+        if not queries_text:
+            return {
+                "date": today.isoformat(),
+                "total_searches": 0,
+                "unique_queries": 0,
+                "top_queries": [],
+                "hourly_distribution": [],
+                "query_length_stats": {
+                    "avg_length": 0,
+                    "min_length": 0,
+                    "max_length": 0
+                }
+            }
 
         # Calculate statistics
         total_searches = len(queries_text)
@@ -582,22 +601,44 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
             for query, count in query_counter.most_common(10)
         ]
 
-        # Hourly distribution
+        # Hourly distribution - Fixed potential datetime issues
         hourly_counts = {}
         for query_time in queries_time:
-            hour = query_time.hour
-            hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+            try:
+                # Handle both datetime and timestamp formats
+                if hasattr(query_time, 'hour'):
+                    hour = query_time.hour
+                else:
+                    # If it's a timestamp, convert it
+                    from datetime import datetime
+                    if isinstance(query_time, (int, float)):
+                        query_time = datetime.fromtimestamp(query_time)
+                    hour = query_time.hour
+                hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+            except Exception as e:
+                logging.warning(f"Error processing query time {query_time}: {str(e)}")
+                continue
 
         hourly_distribution = [
             {"hour": hour, "count": hourly_counts.get(hour, 0)}
             for hour in range(24)
         ]
 
-        # Query length statistics
-        query_lengths = [len(query.split()) for query in queries_text]
-        avg_length = sum(query_lengths) / len(query_lengths) if query_lengths else 0
-        min_length = min(query_lengths) if query_lengths else 0
-        max_length = max(query_lengths) if query_lengths else 0
+        # Query length statistics - Added safety checks
+        query_lengths = []
+        for query in queries_text:
+            try:
+                length = len(query.split()) if query else 0
+                query_lengths.append(length)
+            except Exception:
+                query_lengths.append(0)
+
+        if query_lengths:
+            avg_length = sum(query_lengths) / len(query_lengths)
+            min_length = min(query_lengths)
+            max_length = max(query_lengths)
+        else:
+            avg_length = min_length = max_length = 0
 
         return {
             "date": today.isoformat(),
@@ -616,9 +657,10 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
         raise
     except Exception as e:
         logging.error(f"Error fetching analytics: {str(e)}")
+        # Log more detailed error information for debugging
+        import traceback
+        logging.error(f"Analytics error traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Error fetching analytics data")
-
-
 
 
 # Health check endpoint
