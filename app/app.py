@@ -21,6 +21,8 @@ from utils.database import Database
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import os
+from datetime import date
+from collections import Counter
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -528,6 +530,95 @@ async def search_images(
     except Exception as e:
         logging.error(f"Error searching images: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during search.")
+
+
+@app.get("/api/analytics/today")
+async def get_today_analytics(current_user: dict = Depends(get_current_user)):
+    """Get analytics for today's search queries (no personal data exposed)"""
+    try:
+        # Analytics available to all authenticated users
+
+        today = date.today()
+
+        # Get today's queries from database
+        today_queries = db.execute_query(
+            """
+            SELECT query_text, created_at 
+            FROM queries 
+            WHERE DATE(created_at) = %s 
+            AND query_text IS NOT NULL 
+            AND query_text != ''
+            """,
+            (today,),
+            fetch=True
+        )
+
+        if not today_queries:
+            return {
+                "date": today.isoformat(),
+                "total_searches": 0,
+                "unique_queries": 0,
+                "top_queries": [],
+                "hourly_distribution": [],
+                "query_length_stats": {
+                    "avg_length": 0,
+                    "min_length": 0,
+                    "max_length": 0
+                }
+            }
+
+        # Process the queries
+        queries_text = [query[0].strip().lower() for query in today_queries if query[0]]
+        queries_time = [query[1] for query in today_queries]
+
+        # Calculate statistics
+        total_searches = len(queries_text)
+        unique_queries = len(set(queries_text))
+
+        # Top queries (most frequent)
+        query_counter = Counter(queries_text)
+        top_queries = [
+            {"query": query, "count": count}
+            for query, count in query_counter.most_common(10)
+        ]
+
+        # Hourly distribution
+        hourly_counts = {}
+        for query_time in queries_time:
+            hour = query_time.hour
+            hourly_counts[hour] = hourly_counts.get(hour, 0) + 1
+
+        hourly_distribution = [
+            {"hour": hour, "count": hourly_counts.get(hour, 0)}
+            for hour in range(24)
+        ]
+
+        # Query length statistics
+        query_lengths = [len(query.split()) for query in queries_text]
+        avg_length = sum(query_lengths) / len(query_lengths) if query_lengths else 0
+        min_length = min(query_lengths) if query_lengths else 0
+        max_length = max(query_lengths) if query_lengths else 0
+
+        return {
+            "date": today.isoformat(),
+            "total_searches": total_searches,
+            "unique_queries": unique_queries,
+            "top_queries": top_queries,
+            "hourly_distribution": hourly_distribution,
+            "query_length_stats": {
+                "avg_length": round(avg_length, 2),
+                "min_length": min_length,
+                "max_length": max_length
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching analytics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error fetching analytics data")
+
+
 
 
 # Health check endpoint
