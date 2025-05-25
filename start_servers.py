@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Startup script for CLIP Image Search application
-This script helps you start both the FastAPI backend and Gradio frontend
-"""
-
 import subprocess
 import sys
 import time

@@ -1,6 +1,7 @@
 from fastapi import status, FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 from pydantic import BaseModel
 from typing import List, Optional, Tuple
 import logging
@@ -132,6 +133,16 @@ class CLIPBackend:
 
 # Initialize app and dependencies
 app = FastAPI()
+
+# Add CORS middleware - Allow all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 clip_backend = CLIPBackend()
 security = HTTPBasic()
 db = Database()
@@ -185,7 +196,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)) -> int:
 
 
 # Authentication endpoints
-@app.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@app.post("api/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 async def register_user(user_data: UserRegistration):
     """Register a new user"""
     try:
@@ -226,7 +237,7 @@ async def register_user(user_data: UserRegistration):
         )
 
 
-@app.post("/login", response_model=AuthResponse)
+@app.post("api/login", response_model=AuthResponse)
 async def login_user(login_data: UserLogin):
     """Authenticate a user and return their information"""
     try:
@@ -255,7 +266,7 @@ async def login_user(login_data: UserLogin):
         )
 
 
-@app.get("/user/profile")
+@app.get("api/user/profile")
 async def get_user_profile(user_id: int = Depends(get_current_user)):
     """Get current user's profile information"""
     try:
@@ -294,7 +305,7 @@ async def get_user_profile(user_id: int = Depends(get_current_user)):
 
 
 # Admin endpoints
-@app.post("/admin/upload_image", status_code=status.HTTP_201_CREATED)
+@app.post("api/admin/upload_image", status_code=status.HTTP_201_CREATED)
 async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depends(verify_admin)):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
@@ -306,7 +317,7 @@ async def admin_upload_image(file: UploadFile = File(...), user_id: int = Depend
 
 
 # User query and classification endpoints
-@app.get("/recent_queries")
+@app.get("api/recent_queries")
 async def get_recent_queries(user_id: int = Depends(get_current_user)):
     try:
         recent_queries = db.get_recent_queries(user_id)
@@ -316,7 +327,7 @@ async def get_recent_queries(user_id: int = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Error fetching recent queries.")
 
 
-@app.post("/classify_image")
+@app.post("api/classify_image")
 async def classify_image(file: UploadFile = File(...), user_id: int = Depends(get_current_user)):
     try:
         image = Image.open(BytesIO(await file.read())).convert('RGB')
@@ -334,7 +345,7 @@ async def classify_image(file: UploadFile = File(...), user_id: int = Depends(ge
 
 
 # Feedback endpoints
-@app.post("/feedback")
+@app.post("api/feedback")
 async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_current_user)):
     try:
         db.save_feedback(user_id=user_id, feedback_text=feedback.feedback_text)
@@ -344,7 +355,7 @@ async def submit_feedback(feedback: FeedbackRequest, user_id: int = Depends(get_
         raise HTTPException(status_code=500, detail="Error saving feedback.")
 
 
-@app.delete("/feedback/{feedback_id}")
+@app.delete("api/feedback/{feedback_id}")
 async def delete_feedback(
         feedback_id: int,
         user_id: int = Depends(get_current_user)
@@ -370,7 +381,7 @@ async def delete_feedback(
         raise HTTPException(status_code=500, detail="Error deleting feedback")
 
 
-@app.get("/feedback")
+@app.get("api/feedback")
 async def get_feedback(user_id: int = Depends(get_current_user)):
     try:
         feedbacks = db.get_feedbacks(user_id)
@@ -380,7 +391,7 @@ async def get_feedback(user_id: int = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Error fetching feedbacks.")
 
 
-@app.get("/recent_classifications")
+@app.get("api/recent_classifications")
 async def get_recent_classifications(user_id: int = Depends(get_current_user)):
     try:
         classifications = db.get_recent_classifications(user_id)
@@ -390,7 +401,7 @@ async def get_recent_classifications(user_id: int = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Error fetching classifications.")
 
 
-@app.get("/top-queries")
+@app.get("api/top-queries")
 def get_most_searched_queries(limit: int = 3):
     try:
         top_queries: List[Tuple[str, int]] = db.get_top_queries(limit=limit)
@@ -401,7 +412,7 @@ def get_most_searched_queries(limit: int = 3):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/search_images")
+@app.post("api/search_images")
 async def search_images(
         query: Optional[str] = Form(None),
         file: Optional[UploadFile] = File(None),
