@@ -205,27 +205,34 @@ class Database:
             user_id: User ID to filter by (optional)
             user_name: Username to filter by (optional)
         """
-        if user_id:
+        try:
             query = """
-                SELECT id, feedback_text, created_at FROM feedback
-                WHERE user_id = %s
-                ORDER BY created_at DESC
-            """
-            return self.execute_query(query, (user_id,), fetch=True)
-        elif user_name:
-            query = """
-                SELECT id, feedback_text, created_at FROM feedback
-                WHERE user_name = %s
-                ORDER BY created_at DESC
-            """
-            return self.execute_query(query, (user_name,), fetch=True)
-        else:
-            # Return all feedback if no filter provided
-            query = """
-                SELECT id, user_id, user_name, feedback_text, created_at FROM feedback
-                ORDER BY created_at DESC
-            """
-            return self.execute_query(query, fetch=True)
+                        SELECT u.username, f.feedback_text, f.created_at, f.id
+                        FROM feedback f
+                        JOIN users u ON f.user_id = u.id
+                        ORDER BY f.created_at DESC
+                    """
+
+            results = self.execute_query(query, fetch=True)
+
+            if not results:
+                return []
+
+            feedbacks = []
+            for row in results:
+                username, feedback_text, created_at, feedback_id = row
+                feedbacks.append({
+                    "username": username,
+                    "feedback": feedback_text,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "id": feedback_id
+                })
+
+            return feedbacks
+
+        except Exception as e:
+            logging.error(f"Error fetching all feedbacks with username: {str(e)}")
+            return []
 
     # --- Методы работы с избранным ---
     def add_to_favorites(self, user_id: int, image_path: str):

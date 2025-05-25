@@ -453,12 +453,11 @@ async def delete_feedback(
         logging.error(f"Error deleting feedback: {str(e)}")
         raise HTTPException(status_code=500, detail="Error deleting feedback")
 
-
 @app.get("/api/feedback")
 async def get_feedback(current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user["user_id"]
-        feedbacks = db.get_feedbacks(user_id)
+        feedbacks = db.get_feedbacks_with_username(user_id)
         return {"feedbacks": feedbacks}
     except Exception as e:
         logging.error(f"Error retrieving feedbacks: {str(e)}")
