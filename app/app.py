@@ -219,6 +219,9 @@ class DeleteFeedbackRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     feedback_text: str
 
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 10
 
 # Authentication dependencies
 def get_current_user(token: str = Depends(security)) -> dict:
@@ -487,20 +490,19 @@ def get_most_searched_queries(limit: int = 3):
 
 @app.post("/api/search_images")
 async def search_images(
-        query: str = Form(...),  # Made required, no longer optional
-        top_k: int = Form(10),
-        current_user: dict = Depends(get_current_user)
+    request: SearchRequest,
+    current_user: dict = Depends(get_current_user)
 ):
     try:
         user_id = current_user["user_id"]
 
         # Validate that query is not empty
-        if not query or query.strip() == "":
+        if not request.query or request.query.strip() == "":
             raise HTTPException(status_code=400, detail="Please provide a text query.")
 
         # Search using text query only
-        results = await clip_backend.search_images(query=query.strip(), top_k=top_k)
-        query_text = query.strip()
+        results = await clip_backend.search_images(query=request.query.strip(), top_k=request.top_k)
+        query_text = request.query.strip()
 
         response = []
 
