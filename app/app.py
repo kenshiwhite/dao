@@ -110,20 +110,13 @@ class CLIPBackend:
 
         return top_probs.tolist(), top_classes
 
-    async def search_images(self, query: Optional[str] = None, query_image: Optional[Image.Image] = None,
-                            top_k: int = 10) -> List[Tuple[torch.Tensor, float]]:
-        if query is None and query_image is None:
-            raise ValueError("Please provide either a text query or an image.")
+    async def search_images(self, query: str, top_k: int = 10) -> List[Tuple[torch.Tensor, float]]:
+        """Search images using only text queries"""
+        if not query or not query.strip():
+            raise ValueError("Please provide a text query.")
 
-        similarity = np.zeros(len(self.all_features))
-
-        if query:
-            text_features = self.clip_model.encode_text(query)
-            similarity += self.clip_model.image_similarity(text_features, self.all_features)
-
-        if query_image:
-            image_features = self.clip_model.encode_image(query_image)
-            similarity += self.clip_model.image_similarity(image_features, self.all_features)
+        text_features = self.clip_model.encode_text(query)
+        similarity = self.clip_model.image_similarity(text_features, self.all_features)
 
         top_indices = np.argsort(similarity)[-top_k:][::-1]
         result_images = [self.all_images[i] for i in top_indices]
@@ -218,6 +211,11 @@ class DeleteFeedbackRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     feedback_text: str
+
+
+class TextSearchRequest(BaseModel):
+    query: str
+    top_k: int = 10
 
 
 # Authentication dependencies
@@ -486,25 +484,23 @@ def get_most_searched_queries(limit: int = 3):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# Modified search endpoint - Text only
 @app.post("/api/search_images")
 async def search_images(
-        query: Optional[str] = Form(None),
-        file: Optional[UploadFile] = File(None),
-        top_k: int = Form(10),
+        search_request: TextSearchRequest,
         current_user: dict = Depends(get_current_user)
 ):
+    """Search images using text queries only"""
     try:
         user_id = current_user["user_id"]
+        query = search_request.query.strip()
+        top_k = search_request.top_k
 
-        if query:
-            results = await clip_backend.search_images(query=query, top_k=top_k)
-            query_text = query
-        elif file:
-            image = Image.open(BytesIO(await file.read())).convert('RGB')
-            results = await clip_backend.search_images(query_image=image, top_k=top_k)
-            query_text = "[IMAGE]"
-        else:
-            raise HTTPException(status_code=400, detail="Please provide either a text query or an image.")
+        if not query:
+            raise HTTPException(status_code=400, detail="Please provide a text query.")
+
+        # Search images using text query only
+        results = await clip_backend.search_images(query=query, top_k=top_k)
 
         response = []
 
@@ -516,7 +512,7 @@ async def search_images(
 
             image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
             img_pil.save(image_path)
-            db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
+            db.save_query(query_text=query, image_path=image_path, user_id=user_id)
 
             result = {
                 "similarity": similarity_score,
@@ -525,6 +521,52 @@ async def search_images(
             response.append(result)
 
         return {"results": response}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error searching images: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error during search.")
+
+
+# Alternative endpoint using Form data (for backward compatibility)
+@app.post("/api/search_images_form")
+async def search_images_form(
+        query: str = Form(...),
+        top_k: int = Form(10),
+        current_user: dict = Depends(get_current_user)
+):
+    """Search images using text queries only (Form data version)"""
+    try:
+        user_id = current_user["user_id"]
+        query = query.strip()
+
+        if not query:
+            raise HTTPException(status_code=400, detail="Please provide a text query.")
+
+        # Search images using text query only
+        results = await clip_backend.search_images(query=query, top_k=top_k)
+
+        response = []
+
+        for idx, (img_tensor, similarity_score) in enumerate(results):
+            img_pil = clip_backend.tensor_to_pil(img_tensor)
+            buffered = BytesIO()
+            img_pil.save(buffered, format="JPEG")
+            img_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+            image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
+            img_pil.save(image_path)
+            db.save_query(query_text=query, image_path=image_path, user_id=user_id)
+
+            result = {
+                "similarity": similarity_score,
+                "image_base64": img_base64
+            }
+            response.append(result)
+
+        return {"results": response}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error searching images: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error during search.")
