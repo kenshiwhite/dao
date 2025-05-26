@@ -594,14 +594,15 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
         total_searches = len(queries_text)
         unique_queries = len(set(queries_text))
 
-        # Top queries (most frequent)
+        # Top queries (most frequent) - Only include queries with count > 0 (which they all will be)
         query_counter = Counter(queries_text)
         top_queries = [
             {"query": query, "count": count}
             for query, count in query_counter.most_common(10)
+            if count > 0  # This ensures only non-zero counts (though all will be > 0 anyway)
         ]
 
-        # Hourly distribution - Fixed potential datetime issues
+        # Hourly distribution - Only include hours with searches
         hourly_counts = {}
         for query_time in queries_time:
             try:
@@ -619,10 +620,15 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
                 logging.warning(f"Error processing query time {query_time}: {str(e)}")
                 continue
 
+        # Only include hours that have searches (count > 0)
         hourly_distribution = [
-            {"hour": hour, "count": hourly_counts.get(hour, 0)}
-            for hour in range(24)
+            {"hour": hour, "count": count}
+            for hour, count in hourly_counts.items()
+            if count > 0
         ]
+
+        # Sort by hour for better readability
+        hourly_distribution.sort(key=lambda x: x["hour"])
 
         # Query length statistics - Added safety checks
         query_lengths = []
@@ -661,7 +667,6 @@ async def get_today_analytics(current_user: dict = Depends(get_current_user)):
         import traceback
         logging.error(f"Analytics error traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Error fetching analytics data")
-
 
 # Health check endpoint
 @app.get("/health")
