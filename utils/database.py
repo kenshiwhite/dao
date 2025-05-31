@@ -302,28 +302,41 @@ class Database:
         return results if results else []
 
     def get_recent_queries(self, user_id: int, limit: int = 10) -> List[str]:
+        """Get recent queries for a specific user, returning only query text as a list
 
-        query = """
-            SELECT DISTINCT query_text
-            FROM queries
-            WHERE user_id = %s AND query_text IS NOT NULL AND query_text != ''
-            ORDER BY timestamp DESC
-            LIMIT %s
+        Args:
+            user_id: The user ID to get queries for
+            limit: Maximum number of queries to return (default 10)
+
+        Returns:
+            List of query text strings
         """
+        try:
+            query = """
+                SELECT DISTINCT query_text
+                FROM queries
+                WHERE user_id = %s AND query_text IS NOT NULL AND query_text != ''
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """
 
-        results = self.execute_query(query, (user_id, limit), fetch=True)
+            results = self.execute_query(query, (user_id, limit), fetch=True)
 
-        if not results:
-            return []
+            if not results:
+                return []
 
-        # Extract only the query text and filter out any None or empty values
-        recent_queries = []
-        for row in results:
-            query_text = row[0]
-            if query_text and query_text.strip():  # Check if not None and not empty
-                recent_queries.append(query_text.strip())
+            # Extract only the query text and filter out any None or empty values
+            recent_queries = []
+            for row in results:
+                query_text = row[0]
+                if query_text and query_text.strip():  # Check if not None and not empty
+                    recent_queries.append(query_text.strip())
 
-        return recent_queries
+            return recent_queries
+
+        except Exception as e:
+            logging.error(f"Database error in get_recent_queries: {str(e)}")
+            return []  # Return empty list on error
 
     # --- Методы для пользователей ---
     def register_user(self, username: str, password: str, role: str = 'user'):

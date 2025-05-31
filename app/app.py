@@ -393,8 +393,11 @@ async def admin_upload_image(file: UploadFile = File(...), current_user: dict = 
 
 
 # User query and classification endpoints
+
+# Updated app.py endpoint
 @app.get("/api/recent_queries")
 async def get_recent_queries(current_user: dict = Depends(get_current_user)):
+    """Get recent queries for the current user as an array of strings"""
     try:
         user_id = current_user["user_id"]
 
@@ -417,19 +420,55 @@ async def get_recent_queries(current_user: dict = Depends(get_current_user)):
 @app.post("/api/classify_image")
 async def classify_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     try:
+        # Validate file upload
+        if not file:
+            raise HTTPException(status_code=400, detail="No file uploaded")
+
+        # Check file type
+        if not file.content_type or not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+
+        # Read file contents
+        file_contents = await file.read()
+        if len(file_contents) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
         user_id = current_user["user_id"]
-        image = Image.open(BytesIO(await file.read())).convert('RGB')
-        top_probs, top_classes = clip_backend.classify_image(image)
-        image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
-        image.save(image_path)
-        db.save_classification(user_id, image_path, top_classes, top_probs, int(time.time()))
+
+        # Process the image
+        try:
+            image = Image.open(BytesIO(file_contents)).convert('RGB')
+        except Exception as e:
+            logging.error(f"Error opening image: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid image file format")
+
+        # Classify the image
+        try:
+            top_probs, top_classes = clip_backend.classify_image(image)
+        except Exception as e:
+            logging.error(f"Error during classification: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error processing image classification")
+
+        # Save the image and classification results
+        try:
+            image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
+            image.save(image_path)
+            db.save_classification(user_id, image_path, top_classes, top_probs, int(time.time()))
+        except Exception as e:
+            logging.error(f"Error saving classification: {str(e)}")
+            # Continue even if saving fails - return the classification results
+
         return {
             "top_probs": top_probs,
-            "top_classes": top_classes
+            "top_classes": top_classes,
+            "message": "Image classified successfully"
         }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error classifying image: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error during classification.")
+        logging.error(f"Unexpected error classifying image: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal Server Error during classification")
 
 
 # Feedback endpoints
