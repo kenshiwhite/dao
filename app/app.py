@@ -18,7 +18,8 @@ from torchvision.transforms import transforms
 from pydantic import BaseModel
 from models.clip_model import CLIPModel
 from utils.database import Database
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError as JWTError
 from datetime import datetime, timedelta
 import os
 from datetime import date
@@ -392,13 +393,33 @@ async def admin_upload_image(file: UploadFile = File(...), current_user: dict = 
         raise HTTPException(status_code=500, detail="Failed to upload and index image.")
 
 
-# User query and classification endpoints
 @app.get("/api/recent_queries")
 async def get_recent_queries(current_user: dict = Depends(get_current_user)):
+    """Get recent queries for the current user formatted as an array"""
     try:
         user_id = current_user["user_id"]
-        recent_queries = db.get_recent_queries(user_id)
-        return {"recent_queries": recent_queries}
+        recent_queries_raw = db.get_recent_queries(limit=10, user_id=user_id)
+
+        # Format the queries for frontend consumption
+        formatted_queries = []
+        for query_data in recent_queries_raw:
+            # query_data structure: (query_text, image_path, username, timestamp)
+            query_text, image_path, username, timestamp = query_data
+
+            formatted_query = {
+                "query_text": query_text,
+                "image_path": image_path,
+                "username": username,
+                "timestamp": timestamp.isoformat() if timestamp else None,
+                "search_date": timestamp.strftime("%Y-%m-%d %H:%M:%S") if timestamp else None
+            }
+            formatted_queries.append(formatted_query)
+
+        return {
+            "recent_queries": formatted_queries,
+            "count": len(formatted_queries)
+        }
+
     except Exception as e:
         logging.error(f"Error fetching recent queries: {str(e)}")
         raise HTTPException(status_code=500, detail="Error fetching recent queries.")
@@ -514,7 +535,7 @@ async def search_images(
             img_pil.save(buffered, format="JPEG")
             img_base64 = "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-            image_path = f"search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
+            image_path = f"/search_result_user{user_id}_{int(time.time())}_{idx}.jpg"
             img_pil.save(image_path)
             db.save_query(query_text=query_text, image_path=image_path, user_id=user_id)
 
