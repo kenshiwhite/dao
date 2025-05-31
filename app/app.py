@@ -398,41 +398,47 @@ async def get_recent_queries(current_user: dict = Depends(get_current_user)):
     """Get recent queries for the current user as an array of strings"""
     try:
         user_id = current_user["user_id"]
+        logging.info(f"Fetching recent queries for user_id: {user_id}")
 
-        # Use the existing method signature: get_recent_queries(limit, user_id)
-        raw_queries = db.get_recent_queries(limit=10, user_id=user_id)
+        # Direct database query to bypass any method issues
+        raw_queries = db.execute_query(
+            """
+            SELECT DISTINCT query_text 
+            FROM queries 
+            WHERE user_id = %s 
+            AND query_text IS NOT NULL 
+            AND query_text != '' 
+            ORDER BY timestamp DESC 
+            LIMIT 10
+            """,
+            (user_id,),
+            fetch=True
+        )
 
-        # Process the results to extract just query text
+        logging.info(f"Raw queries result: {raw_queries}")
+
+        # Process the results
         recent_queries = []
         if raw_queries:
-            for query_data in raw_queries:
-                if isinstance(query_data, tuple) and len(query_data) >= 1:
-                    query_text = query_data[0]  # query_text is the first element
-                    if query_text and query_text.strip():
-                        recent_queries.append(query_text.strip())
+            for row in raw_queries:
+                if row and len(row) > 0 and row[0]:
+                    query_text = row[0].strip()
+                    if query_text:
+                        recent_queries.append(query_text)
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_queries = []
-        for query in recent_queries:
-            if query not in seen:
-                seen.add(query)
-                unique_queries.append(query)
-
-        # Limit to 10 queries
-        final_queries = unique_queries[:10]
+        logging.info(f"Processed queries: {recent_queries}")
 
         return {
-            "recent_queries": final_queries
+            "recent_queries": recent_queries
         }
 
     except Exception as e:
-        logging.error(f"Error fetching recent queries: {str(e)}")
         import traceback
+        logging.error(f"Error fetching recent queries: {str(e)}")
         logging.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
-            detail="Error fetching recent queries."
+            detail=f"Error fetching recent queries: {str(e)}"
         )
 
 
