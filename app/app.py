@@ -382,15 +382,57 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
 
 # Admin endpoints
 @app.post("/api/admin/upload_image", status_code=status.HTTP_201_CREATED)
-async def admin_upload_image(file: UploadFile = File(...), current_user: dict = Depends(verify_admin)):
+async def admin_upload_image(
+        file: UploadFile = File(...),
+        current_user: dict = Depends(verify_admin)
+):
+    """Admin endpoint to upload and index images"""
     try:
-        image = Image.open(BytesIO(await file.read())).convert('RGB')
-        clip_backend.add_image_to_index(image)
-        return {"detail": "Image uploaded and added to index."}
+        # Validate file
+        if not file or not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+
+        # Check file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed: {', '.join(allowed_types)}"
+            )
+
+        # Read and validate file content
+        file_contents = await file.read()
+        if len(file_contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+
+        if len(file_contents) > 20 * 1024 * 1024:  # 20MB limit for admin
+            raise HTTPException(status_code=400, detail="File too large (max 20MB)")
+
+        # Process image
+        try:
+            image = Image.open(BytesIO(file_contents)).convert('RGB')
+        except Exception as e:
+            logging.error(f"Error processing uploaded image: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid or corrupted image")
+
+        # Add to index
+        try:
+            clip_backend.add_image_to_index(image)
+        except Exception as e:
+            logging.error(f"Error adding image to index: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to add image to search index")
+
+        return {
+            "status": "success",
+            "message": "Image uploaded and added to index successfully",
+            "filename": file.filename
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Admin upload failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to upload and index image.")
-
+        raise HTTPException(status_code=500, detail="Internal server error during upload")
 
 # User query and classification endpoints
 @app.get("/api/recent_queries")
@@ -400,100 +442,111 @@ async def get_recent_queries(current_user: dict = Depends(get_current_user)):
         user_id = current_user["user_id"]
         logging.info(f"Fetching recent queries for user_id: {user_id}")
 
-        # Direct database query to bypass any method issues
-        raw_queries = db.execute_query(
-            """
-            SELECT DISTINCT query_text 
-            FROM queries 
-            WHERE user_id = %s 
-            AND query_text IS NOT NULL 
-            AND query_text != '' 
-            ORDER BY timestamp DESC 
-            LIMIT 10
-            """,
-            (user_id,),
-            fetch=True
-        )
+        # Use the database method directly - it's already correct
+        recent_queries = db.get_recent_queries(user_id, limit=10)
 
-        logging.info(f"Raw queries result: {raw_queries}")
-
-        # Process the results
-        recent_queries = []
-        if raw_queries:
-            for row in raw_queries:
-                if row and len(row) > 0 and row[0]:
-                    query_text = row[0].strip()
-                    if query_text:
-                        recent_queries.append(query_text)
-
-        logging.info(f"Processed queries: {recent_queries}")
+        logging.info(f"Retrieved queries: {recent_queries}")
 
         return {
-            "recent_queries": recent_queries
+            "recent_queries": recent_queries,
+            "status": "success"
         }
 
     except Exception as e:
         import traceback
         logging.error(f"Error fetching recent queries: {str(e)}")
         logging.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error fetching recent queries: {str(e)}"
-        )
+
+        # Return empty array instead of raising exception
+        return {
+            "recent_queries": [],
+            "status": "error",
+            "message": str(e)
+        }
 
 
 @app.post("/api/classify_image")
-async def classify_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+async def classify_image(
+        file: UploadFile = File(...),
+        current_user: dict = Depends(get_current_user)
+):
+    """Classify an uploaded image"""
     try:
-        # Validate file upload
+        # Enhanced validation
         if not file:
-            raise HTTPException(status_code=400, detail="No file uploaded")
+            raise HTTPException(status_code=400, detail="No file provided")
 
-        # Check file type
-        if not file.content_type or not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="File must be an image")
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
 
-        # Read file contents
+        # Check file size (limit to 10MB)
         file_contents = await file.read()
         if len(file_contents) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+            raise HTTPException(status_code=400, detail="File is empty")
+
+        if len(file_contents) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+
+        # Validate file type more thoroughly
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp', 'image/webp']
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+            )
 
         user_id = current_user["user_id"]
+        logging.info(f"Processing image classification for user_id: {user_id}")
 
-        # Process the image
+        # Process the image with better error handling
         try:
             image = Image.open(BytesIO(file_contents)).convert('RGB')
+            logging.info(f"Image loaded successfully: {image.size}")
         except Exception as e:
             logging.error(f"Error opening image: {str(e)}")
-            raise HTTPException(status_code=400, detail="Invalid image file format")
+            raise HTTPException(status_code=400, detail="Invalid or corrupted image file")
 
         # Classify the image
         try:
             top_probs, top_classes = clip_backend.classify_image(image)
+            logging.info(f"Classification successful: {top_classes[:3]}")  # Log top 3 classes
         except Exception as e:
             logging.error(f"Error during classification: {str(e)}")
             raise HTTPException(status_code=500, detail="Error processing image classification")
 
-        # Save the image and classification results
+        # Save the classification results (optional - don't fail if this fails)
         try:
             image_path = f"classification_user{user_id}_{int(time.time())}.jpg"
-            image.save(image_path)
+            # Create directory if it doesn't exist
+            import os
+            os.makedirs("uploads", exist_ok=True)
+            full_path = os.path.join("uploads", image_path)
+            image.save(full_path)
+
             db.save_classification(user_id, image_path, top_classes, top_probs, int(time.time()))
+            logging.info(f"Classification saved to database: {image_path}")
         except Exception as e:
-            logging.error(f"Error saving classification: {str(e)}")
-            # Continue even if saving fails - return the classification results
+            logging.warning(f"Could not save classification to database: {str(e)}")
+            # Continue without failing - the classification still worked
 
         return {
+            "status": "success",
             "top_probs": top_probs,
             "top_classes": top_classes,
-            "message": "Image classified successfully"
+            "message": "Image classified successfully",
+            "filename": file.filename
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Unexpected error classifying image: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal Server Error during classification")
+        logging.error(f"Unexpected error in classify_image: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error during image classification"
+        )
 
 
 # Feedback endpoints
