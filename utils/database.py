@@ -301,29 +301,29 @@ class Database:
         results = self.execute_query(query, (limit,), fetch=True)
         return results if results else []
 
-    def get_recent_queries(self, limit: int = 10, user_id: Optional[int] = None) -> List[Tuple]:
-        if user_id:
-            query = """
-                SELECT q.query_text, q.image_path, u.username, q.timestamp
-                FROM queries q
-                LEFT JOIN users u ON q.user_id = u.id
-                WHERE q.user_id = %s
-                ORDER BY q.timestamp DESC
-                LIMIT %s
-            """
-            params = (user_id, limit)
-        else:
-            query = """
-                SELECT q.query_text, q.image_path, u.username, q.timestamp
-                FROM queries q
-                LEFT JOIN users u ON q.user_id = u.id
-                ORDER BY q.timestamp DESC
-                LIMIT %s
-            """
-            params = (limit,)
+    def get_recent_queries(self, user_id: int, limit: int = 10) -> List[str]:
 
-        results = self.execute_query(query, params, fetch=True)
-        return results if results else []
+        query = """
+            SELECT DISTINCT query_text
+            FROM queries
+            WHERE user_id = %s AND query_text IS NOT NULL AND query_text != ''
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """
+
+        results = self.execute_query(query, (user_id, limit), fetch=True)
+
+        if not results:
+            return []
+
+        # Extract only the query text and filter out any None or empty values
+        recent_queries = []
+        for row in results:
+            query_text = row[0]
+            if query_text and query_text.strip():  # Check if not None and not empty
+                recent_queries.append(query_text.strip())
+
+        return recent_queries
 
     # --- Методы для пользователей ---
     def register_user(self, username: str, password: str, role: str = 'user'):
