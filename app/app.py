@@ -393,24 +393,43 @@ async def admin_upload_image(file: UploadFile = File(...), current_user: dict = 
 
 
 # User query and classification endpoints
-
-# Updated app.py endpoint
 @app.get("/api/recent_queries")
 async def get_recent_queries(current_user: dict = Depends(get_current_user)):
     """Get recent queries for the current user as an array of strings"""
     try:
         user_id = current_user["user_id"]
 
-        # Get recent queries (limited to 10)
-        recent_queries = db.get_recent_queries(user_id, limit=10)
+        # Use the existing method signature: get_recent_queries(limit, user_id)
+        raw_queries = db.get_recent_queries(limit=10, user_id=user_id)
+
+        # Process the results to extract just query text
+        recent_queries = []
+        if raw_queries:
+            for query_data in raw_queries:
+                if isinstance(query_data, tuple) and len(query_data) >= 1:
+                    query_text = query_data[0]  # query_text is the first element
+                    if query_text and query_text.strip():
+                        recent_queries.append(query_text.strip())
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_queries = []
+        for query in recent_queries:
+            if query not in seen:
+                seen.add(query)
+                unique_queries.append(query)
+
+        # Limit to 10 queries
+        final_queries = unique_queries[:10]
 
         return {
-            "recent_queries": recent_queries,
-            "count": len(recent_queries)
+            "recent_queries": final_queries
         }
 
     except Exception as e:
         logging.error(f"Error fetching recent queries: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail="Error fetching recent queries."
