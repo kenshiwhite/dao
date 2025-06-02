@@ -434,87 +434,31 @@ async def admin_upload_image(
         logging.error(f"Admin upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error during upload")
 
-# User query and classification endpoints
+
 @app.get("/api/recent_queries")
 async def get_recent_queries(current_user: dict = Depends(get_current_user)):
-    """Get recent queries for the current user as an array of strings with enhanced debugging"""
+    """Get recent queries for the current user as an array of strings"""
     try:
         user_id = current_user["user_id"]
         logging.info(f"🔍 Fetching recent queries for user_id: {user_id}")
 
-        # First, let's check if the user exists and has any data
-        user_check = db.execute_query(
-            "SELECT id, username FROM users WHERE id = %s",
-            (user_id,),
-            fetch=True
-        )
+        # Get recent queries using the database method
+        recent_queries = db.get_recent_queries(user_id, limit=10)
 
-        if not user_check:
-            logging.error(f"❌ User {user_id} not found in database")
-            return {
-                "recent_queries": [],
-                "status": "error",
-                "message": f"User {user_id} not found"
-            }
+        logging.info(f"📋 Database returned {len(recent_queries)} recent queries")
 
-        logging.info(f"✅ User found: {user_check[0]}")
+        # If no queries found, try a direct database query to debug
+        if not recent_queries:
+            logging.info("📋 No queries from get_recent_queries method, trying direct query...")
 
-        # Check total number of queries for this user
-        total_queries = db.execute_query(
-            "SELECT COUNT(*) FROM queries WHERE user_id = %s",
-            (user_id,),
-            fetch=True
-        )
-
-        if total_queries:
-            total_count = total_queries[0][0]
-            logging.info(f"📊 Total queries for user {user_id}: {total_count}")
-        else:
-            logging.warning(f"⚠️ Could not count queries for user {user_id}")
-
-        # Check if queries table exists and has the right structure
-        try:
-            table_info = db.execute_query(
-                "DESCRIBE queries",
-                fetch=True
-            )
-            logging.info(f"📋 Queries table structure: {table_info}")
-        except Exception as e:
-            logging.error(f"❌ Error checking table structure: {str(e)}")
-
-        # Get all queries for this user (for debugging)
-        all_user_queries = db.execute_query(
-            """
-            SELECT id, query_text, timestamp, image_path 
-            FROM queries 
-            WHERE user_id = %s 
-            ORDER BY timestamp DESC
-            """,
-            (user_id,),
-            fetch=True
-        )
-
-        if all_user_queries:
-            logging.info(f"📝 Found {len(all_user_queries)} total queries for user {user_id}")
-            for i, query in enumerate(all_user_queries[:3]):  # Log first 3 for debugging
-                logging.info(f"   Query {i + 1}: ID={query[0]}, text='{query[1]}', timestamp={query[2]}")
-        else:
-            logging.warning(f"⚠️ No queries found for user {user_id}")
-
-        # Now try the get_recent_queries method with debugging
-        try:
-            recent_queries = db.get_recent_queries(user_id, limit=10)
-            logging.info(f"📋 get_recent_queries returned: {recent_queries} (type: {type(recent_queries)})")
-        except Exception as e:
-            logging.error(f"❌ Error in get_recent_queries method: {str(e)}")
-            # Fallback to direct query
-            recent_queries_raw = db.execute_query(
+            # Direct query to see what's in the database
+            all_queries = db.execute_query(
                 """
-                SELECT DISTINCT query_text 
+                SELECT query_text, timestamp 
                 FROM queries 
                 WHERE user_id = %s 
                 AND query_text IS NOT NULL 
-                AND query_text != '' 
+                AND query_text != ''
                 ORDER BY timestamp DESC 
                 LIMIT 10
                 """,
@@ -522,217 +466,94 @@ async def get_recent_queries(current_user: dict = Depends(get_current_user)):
                 fetch=True
             )
 
-            if recent_queries_raw:
-                recent_queries = [query[0] for query in recent_queries_raw if query[0]]
-                logging.info(f"📋 Fallback query returned: {recent_queries}")
+            if all_queries:
+                logging.info(f"📋 Direct query found {len(all_queries)} queries")
+                recent_queries = [query[0].strip() for query in all_queries if query[0] and query[0].strip()]
             else:
+                logging.info("📋 No queries found in direct query either")
                 recent_queries = []
-                logging.warning("⚠️ Fallback query also returned empty")
 
-        # Additional debugging: Check for queries with empty or null text
-        null_queries = db.execute_query(
-            """
-            SELECT COUNT(*) 
-            FROM queries 
-            WHERE user_id = %s 
-            AND (query_text IS NULL OR query_text = '')
-            """,
-            (user_id,),
-            fetch=True
-        )
-
-        if null_queries:
-            null_count = null_queries[0][0]
-            logging.info(f"📊 Queries with null/empty text for user {user_id}: {null_count}")
-
-        # Check recent queries from the last 24 hours
-        recent_24h = db.execute_query(
-            """
-            SELECT COUNT(*), query_text
-            FROM queries 
-            WHERE user_id = %s 
-            AND timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-            GROUP BY query_text
-            ORDER BY COUNT(*) DESC
-            """,
-            (user_id,),
-            fetch=True
-        )
-
-        if recent_24h:
-            logging.info(f"📅 Queries in last 24h: {len(recent_24h)}")
-            for query in recent_24h[:3]:
-                logging.info(f"   Recent: count={query[0]}, text='{query[1]}'")
-
-        return {
-            "recent_queries": recent_queries if recent_queries else [],
-            "status": "debug",
-            "debug_info": {
-                "user_id": user_id,
-                "total_queries": total_count if 'total_count' in locals() else 0,
-                "queries_found": len(recent_queries) if recent_queries else 0,
-                "null_queries": null_count if 'null_count' in locals() else 0,
-                "recent_24h": len(recent_24h) if recent_24h else 0
-            }
-        }
+        # Return the simple array format that the frontend expects
+        return recent_queries
 
     except Exception as e:
         import traceback
         logging.error(f"❌ Error fetching recent queries: {str(e)}")
         logging.error(f"🔍 Traceback: {traceback.format_exc()}")
 
-        return {
-            "recent_queries": [],
-            "status": "error",
-            "message": str(e),
-            "debug_info": {
-                "error_type": type(e).__name__,
-                "user_id": current_user.get("user_id", "unknown")
-            }
-        }
-
+        # Return empty array on error to maintain API consistency
+        return []
 
 @app.post("/api/classify_image")
 async def classify_image(
-        file: UploadFile = File(..., description="Image file to classify"),
+        file: UploadFile = File(...),
         current_user: dict = Depends(get_current_user)
 ):
-    """Classify an uploaded image with improved error handling"""
+    """Classify an uploaded image"""
     try:
-        # Check if file exists
-        if not file:
+        # Validate file
+        if not file or not file.filename:
             raise HTTPException(status_code=400, detail="No file provided")
 
-        # Check if filename exists
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No filename provided")
-
-        # Read file contents first
-        try:
-            file_contents = await file.read()
-        except Exception as e:
-            logging.error(f"Error reading file: {str(e)}")
-            raise HTTPException(status_code=400, detail="Could not read the uploaded file")
-
-        # Check if file is empty
-        if len(file_contents) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-        # Check file size (limit to 10MB)
-        if len(file_contents) > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=400, detail="File too large (maximum 10MB allowed)")
-
-        # Enhanced content type validation
-        allowed_types = [
-            'image/jpeg', 'image/jpg', 'image/png',
-            'image/gif', 'image/bmp', 'image/webp',
-            'image/tiff', 'image/tif'
-        ]
-
-        # Also check file extension as backup
-        allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
-        file_extension = Path(file.filename).suffix.lower()
-
-        if file.content_type not in allowed_types and file_extension not in allowed_extensions:
+        # Check file type
+        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
+        if file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+                detail=f"Invalid file type: {file.content_type}. Allowed: {', '.join(allowed_types)}"
             )
+
+        # Read file
+        file_contents = await file.read()
+        if len(file_contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+
+        if len(file_contents) > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=400, detail="File too large (max 10MB)")
 
         user_id = current_user["user_id"]
-        logging.info(f"Processing image classification for user_id: {user_id}, filename: {file.filename}")
 
-        # Process the image with enhanced error handling
+        # Process image
         try:
-            # Try to open the image
-            image = Image.open(BytesIO(file_contents))
-
-            # Convert to RGB to ensure compatibility
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-
-            # Validate image dimensions (optional safety check)
-            width, height = image.size
-            if width < 10 or height < 10:
-                raise HTTPException(status_code=400, detail="Image too small (minimum 10x10 pixels)")
-
-            if width > 10000 or height > 10000:
-                raise HTTPException(status_code=400, detail="Image too large (maximum 10000x10000 pixels)")
-
-            logging.info(f"Image loaded successfully: {image.size}, mode: {image.mode}")
-
-        except HTTPException:
-            raise
+            image = Image.open(BytesIO(file_contents)).convert('RGB')
         except Exception as e:
-            logging.error(f"Error opening/processing image: {str(e)}")
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid or corrupted image file. Please ensure the file is a valid image."
-            )
+            logging.error(f"Error processing image: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid or corrupted image")
 
-        # Classify the image
+        # Classify image
         try:
             top_probs, top_classes = clip_backend.classify_image(image)
-            logging.info(f"Classification successful. Top classes: {top_classes[:3]}")
-
         except Exception as e:
-            logging.error(f"Error during CLIP classification: {str(e)}")
-            import traceback
-            logging.error(f"Classification error traceback: {traceback.format_exc()}")
-            raise HTTPException(
-                status_code=500,
-                detail="Error processing image classification. Please try again."
-            )
+            logging.error(f"Classification error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Classification failed")
 
-        # Save the classification results (non-blocking)
+        # Save classification (optional, don't fail if this fails)
         try:
-            # Create uploads directory if it doesn't exist
             import os
             uploads_dir = "uploads"
             os.makedirs(uploads_dir, exist_ok=True)
 
-            # Generate unique filename
             timestamp = int(time.time())
             image_filename = f"classification_user{user_id}_{timestamp}_{file.filename}"
             image_path = os.path.join(uploads_dir, image_filename)
 
-            # Save image
             image.save(image_path, format='JPEG', quality=85)
-
-            # Save to database
             db.save_classification(user_id, image_path, top_classes, top_probs, timestamp)
-            logging.info(f"Classification saved to database: {image_path}")
-
         except Exception as e:
-            logging.warning(f"Could not save classification to database: {str(e)}")
-            # Don't fail the request if saving fails
+            logging.warning(f"Could not save classification: {str(e)}")
 
-        # Return successful response
-        response_data = {
+        return {
             "status": "success",
-            "top_probs": [float(prob) for prob in top_probs],  # Ensure JSON serializable
+            "top_probs": [float(prob) for prob in top_probs],
             "top_classes": top_classes,
-            "message": "Image classified successfully",
-            "filename": file.filename,
-            "image_size": f"{width}x{height}",
-            "processed_at": datetime.utcnow().isoformat()
+            "filename": file.filename
         }
 
-        logging.info(f"Returning classification results for {file.filename}")
-        return response_data
-
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        # Catch any unexpected errors
         logging.error(f"Unexpected error in classify_image: {str(e)}")
-        import traceback
-        logging.error(f"Full traceback: {traceback.format_exc()}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error during image classification. Please try again."
-        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # Feedback endpoints

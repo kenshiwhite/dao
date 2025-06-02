@@ -312,31 +312,48 @@ class Database:
             List of query text strings
         """
         try:
+            # Updated query to get the most recent queries (not distinct to preserve order)
             query = """
-                SELECT DISTINCT query_text
+                SELECT query_text, timestamp
                 FROM queries
-                WHERE user_id = %s AND query_text IS NOT NULL AND query_text != ''
+                WHERE user_id = %s 
+                AND query_text IS NOT NULL 
+                AND query_text != ''
+                AND TRIM(query_text) != ''
                 ORDER BY timestamp DESC
                 LIMIT %s
             """
 
+            logging.info(f"🔍 Executing query for user_id: {user_id}, limit: {limit}")
+
             results = self.execute_query(query, (user_id, limit), fetch=True)
 
+            logging.info(f"📋 Raw query results: {len(results) if results else 0} rows")
+
             if not results:
+                logging.info("📋 No results returned from database")
                 return []
 
-            # Extract only the query text and filter out any None or empty values
+            # Extract query text and remove duplicates while preserving order
+            seen_queries = set()
             recent_queries = []
+
             for row in results:
                 query_text = row[0]
-                if query_text and query_text.strip():  # Check if not None and not empty
-                    recent_queries.append(query_text.strip())
+                if query_text and query_text.strip():
+                    cleaned_query = query_text.strip().lower()  # Normalize for duplicate checking
+                    if cleaned_query not in seen_queries:
+                        seen_queries.add(cleaned_query)
+                        recent_queries.append(query_text.strip())  # Keep original case
 
-            return recent_queries
+            logging.info(f"📋 Processed queries: {len(recent_queries)} unique queries")
+            return recent_queries[:limit]  # Ensure we don't exceed limit
 
         except Exception as e:
-            logging.error(f"Database error in get_recent_queries: {str(e)}")
-            return []  # Return empty list on error
+            logging.error(f"❌ Database error in get_recent_queries: {str(e)}")
+            import traceback
+            logging.error(f"🔍 Traceback: {traceback.format_exc()}")
+            return []
 
     # --- Методы для пользователей ---
     def register_user(self, username: str, password: str, role: str = 'user'):
