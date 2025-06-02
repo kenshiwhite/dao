@@ -257,7 +257,7 @@ class Database:
         return [row[0] for row in results] if results else []
 
     # --- Методы работы с запросами ---
-    def save_query(self, query_text: str, image_path: str, user_id: int):
+    def save_query(self, query_text: str, image_path: str = None, user_id: int = None):
         self.execute_query(
             "INSERT INTO queries (query_text, image_path, user_id) VALUES (%s, %s, %s)",
             (query_text, image_path, user_id)
@@ -312,7 +312,7 @@ class Database:
             List of query text strings
         """
         try:
-            # Updated query to get the most recent queries (not distinct to preserve order)
+            # Updated query to include queries even when image_path is NULL
             query = """
                 SELECT query_text, timestamp
                 FROM queries
