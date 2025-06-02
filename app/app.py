@@ -383,22 +383,37 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
 # Admin endpoints
 @app.post("/api/admin/upload_image", status_code=status.HTTP_201_CREATED)
 async def admin_upload_image(
-        file: UploadFile = File(...),
+        file: UploadFile = File(..., description="Image file to upload"),
         current_user: dict = Depends(verify_admin)
 ):
     """Admin endpoint to upload and index images"""
     try:
-        # Validate file
-        if not file or not file.filename:
+        # Enhanced validation
+        if not file:
             raise HTTPException(status_code=400, detail="No file provided")
 
-        # Check file type
-        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
-        if file.content_type not in allowed_types:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+
+        # Log the received file info for debugging
+        logging.info(f"Received file: {file.filename}, content_type: {file.content_type}")
+
+        # Check file type - be more permissive with content type detection
+        allowed_extensions = ['.jpeg', '.jpg', '.png', '.gif', '.bmp']
+        file_extension = Path(file.filename).suffix.lower()
+
+        if file_extension not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid file type. Allowed: {', '.join(allowed_types)}"
+                detail=f"Invalid file extension: {file_extension}. Allowed: {', '.join(allowed_extensions)}"
             )
+
+        # Also check content type if provided
+        if file.content_type:
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
+            if file.content_type not in allowed_types:
+                logging.warning(
+                    f"Content type {file.content_type} not in allowed types, but extension {file_extension} is valid")
 
         # Read and validate file content
         file_contents = await file.read()
@@ -413,7 +428,7 @@ async def admin_upload_image(
             image = Image.open(BytesIO(file_contents)).convert('RGB')
         except Exception as e:
             logging.error(f"Error processing uploaded image: {str(e)}")
-            raise HTTPException(status_code=400, detail="Invalid or corrupted image")
+            raise HTTPException(status_code=400, detail="Invalid or corrupted image file")
 
         # Add to index
         try:
@@ -425,14 +440,16 @@ async def admin_upload_image(
         return {
             "status": "success",
             "message": "Image uploaded and added to index successfully",
-            "filename": file.filename
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size_bytes": len(file_contents)
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Admin upload failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error during upload")
+        raise HTTPException(status_code=500, detail=f"Internal server error during upload: {str(e)}")
 
 
 @app.get("/api/recent_queries")
@@ -484,26 +501,42 @@ async def get_recent_queries(current_user: dict = Depends(get_current_user)):
         # Return empty array on error to maintain API consistency
         return []
 
+
 @app.post("/api/classify_image")
 async def classify_image(
-        file: UploadFile = File(...),
+        file: UploadFile = File(..., description="Image file to classify"),
         current_user: dict = Depends(get_current_user)
 ):
     """Classify an uploaded image"""
     try:
-        # Validate file
-        if not file or not file.filename:
+        # Enhanced validation with better error messages
+        if not file:
             raise HTTPException(status_code=400, detail="No file provided")
 
-        # Check file type
-        allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
-        if file.content_type not in allowed_types:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+
+        # Log the received file info for debugging
+        logging.info(f"Classify - Received file: {file.filename}, content_type: {file.content_type}")
+
+        # Check file extension (more reliable than content_type)
+        allowed_extensions = ['.jpeg', '.jpg', '.png', '.gif', '.bmp']
+        file_extension = Path(file.filename).suffix.lower()
+
+        if file_extension not in allowed_extensions:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid file type: {file.content_type}. Allowed: {', '.join(allowed_types)}"
+                detail=f"Invalid file extension: {file_extension}. Allowed: {', '.join(allowed_extensions)}"
             )
 
-        # Read file
+        # Also check content type if provided (but don't rely on it entirely)
+        if file.content_type:
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp']
+            if file.content_type not in allowed_types:
+                logging.warning(
+                    f"Content type {file.content_type} not in allowed types, but extension {file_extension} is valid")
+
+        # Read file with size validation
         file_contents = await file.read()
         if len(file_contents) == 0:
             raise HTTPException(status_code=400, detail="Empty file")
@@ -513,19 +546,21 @@ async def classify_image(
 
         user_id = current_user["user_id"]
 
-        # Process image
+        # Process image with better error handling
         try:
             image = Image.open(BytesIO(file_contents)).convert('RGB')
+            logging.info(f"Successfully processed image: {image.size}")
         except Exception as e:
             logging.error(f"Error processing image: {str(e)}")
-            raise HTTPException(status_code=400, detail="Invalid or corrupted image")
+            raise HTTPException(status_code=400, detail=f"Invalid or corrupted image: {str(e)}")
 
         # Classify image
         try:
             top_probs, top_classes = clip_backend.classify_image(image)
+            logging.info(f"Classification successful: {top_classes[:3]}")
         except Exception as e:
             logging.error(f"Classification error: {str(e)}")
-            raise HTTPException(status_code=500, detail="Classification failed")
+            raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
 
         # Save classification (optional, don't fail if this fails)
         try:
@@ -539,6 +574,7 @@ async def classify_image(
 
             image.save(image_path, format='JPEG', quality=85)
             db.save_classification(user_id, image_path, top_classes, top_probs, timestamp)
+            logging.info(f"Classification saved to database")
         except Exception as e:
             logging.warning(f"Could not save classification: {str(e)}")
 
@@ -546,14 +582,15 @@ async def classify_image(
             "status": "success",
             "top_probs": [float(prob) for prob in top_probs],
             "top_classes": top_classes,
-            "filename": file.filename
+            "filename": file.filename,
+            "file_size": len(file_contents)
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logging.error(f"Unexpected error in classify_image: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # Feedback endpoints
