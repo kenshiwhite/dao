@@ -10,3 +10,4 @@ python-dotenv
 tf-keras
 opencv-python
 redis
+faiss-cpu
