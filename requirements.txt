@@ -8,5 +8,5 @@ tqdm
 psycopg2-binary
 python-dotenv
 tf-keras
-cv2
+opencv-python
 redis
